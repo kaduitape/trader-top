@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Dados de mercado — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Integridade do feed</span>
+        <h1 class="tp-page-title">Dados de mercado</h1>
+        <p class="tp-page-description">
+            Cobertura armazenada de candles e ticks. Use esta tela para identificar lacunas
+            antes de confiar em uma análise ou backtest.
+        </p>
+    </div>
+    <a href="/dashboard/markets" class="btn btn-outline-light">
+        <i class="bi bi-globe-americas me-2"></i>Ver mercados
+    </a>
+</header>
+
+<div class="tp-stat-grid">
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-currency-exchange"></i></span>
+        <span class="tp-stat-copy"><span>Símbolos com dados</span><strong>{{ symbol_count }}</strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-bar-chart"></i></span>
+        <span class="tp-stat-copy"><span>Candles</span><strong>{{ "{:,}".format(candle_count) }}</strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-dot"></i></span>
+        <span class="tp-stat-copy"><span>Ticks</span><strong>{{ "{:,}".format(tick_count) }}</strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-layers"></i></span>
+        <span class="tp-stat-copy"><span>Timeframes presentes</span><strong>{{ timeframe_count }} / 9</strong></span>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-12">
+        <div class="card tp-table-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-bar-chart me-2"></i>Cobertura de candles</span>
+                <span class="small text-muted">{{ candle_summary|length }} séries</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr><th>Símbolo</th><th>Timeframe</th><th>Registros</th><th>Início</th><th>Última atualização</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                    {% for symbol_name, timeframe, count, first_open, last_open in candle_summary %}
+                        <tr>
+                            <td class="tp-symbol">{{ symbol_name }}</td>
+                            <td><span class="badge text-bg-dark">{{ "MN" if timeframe == "MN1" else timeframe }}</span></td>
+                            <td>{{ "{:,}".format(count) }}</td>
+                            <td class="text-muted">{{ first_open }}</td>
+                            <td class="text-muted">{{ last_open }}</td>
+                            <td class="text-end"><a href="/dashboard/analysis?symbol={{ symbol_name }}&timeframe={{ timeframe }}" class="tp-market-action">Analisar</a></td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="6" class="tp-empty-row">Nenhum candle coletado. Sincronize um mercado para começar.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card tp-table-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-reception-4 me-2"></i>Cobertura de ticks</span>
+                <span class="small text-muted">{{ tick_summary|length }} feeds</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr><th>Símbolo</th><th>Registros</th><th>Primeiro tick</th><th>Último tick</th></tr>
+                    </thead>
+                    <tbody>
+                    {% for symbol_name, count, first_ts, last_ts in tick_summary %}
+                        <tr>
+                            <td class="tp-symbol">{{ symbol_name }}</td>
+                            <td>{{ "{:,}".format(count) }}</td>
+                            <td class="text-muted">{{ first_ts }}</td>
+                            <td class="text-muted">{{ last_ts }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="4" class="tp-empty-row">Nenhum tick coletado.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="tp-context-note mt-4">
+    <i class="bi bi-terminal"></i>
+    <div>
+        A coleta continua no host conectado ao MT5:
+        <code>python -m app.cli collect candles --symbol XAUUSD --timeframe M15 --count 500</code>.
+        O sistema nunca preenche lacunas com dados sintéticos.
+    </div>
+</div>
+{% endblock %}

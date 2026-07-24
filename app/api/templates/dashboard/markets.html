@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Mercados — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Universo monitorado</span>
+        <h1 class="tp-page-title">Central de mercados</h1>
+        <p class="tp-page-description">
+            Descubra pares de Forex e metais. “Pronto” significa que o símbolo real da
+            corretora já foi sincronizado; selecione os demais na conexão automática.
+        </p>
+    </div>
+    <a class="btn btn-primary" href="/dashboard/mt5">
+        <i class="bi bi-pc-display-horizontal me-2"></i>Configurar MT5
+    </a>
+</header>
+
+<div class="tp-stat-grid">
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-collection"></i></span>
+        <span class="tp-stat-copy"><span>Catálogo</span><strong>{{ catalog_count }}</strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-check2-circle"></i></span>
+        <span class="tp-stat-copy"><span>Prontos para análise</span><strong>{{ ready_count }}</strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-hourglass-split"></i></span>
+        <span class="tp-stat-copy"><span>A sincronizar</span><strong>{{ catalog_count - ready_count }}</strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-gem"></i></span>
+        <span class="tp-stat-copy"><span>Metais incluídos</span><strong>XAU · XAG</strong></span>
+    </div>
+</div>
+
+<div class="tp-context-note mb-4">
+    <i class="bi bi-shield-check"></i>
+    <div>
+        O catálogo não cria preços nem especificações genéricas. Para liberar um ativo,
+        selecione-o no conector automático. Sufixos como <code>XAUUSD.a</code>
+        são descobertos diretamente na corretora.
+    </div>
+</div>
+
+<div class="tp-market-toolbar">
+    <div class="tp-market-search">
+        <i class="bi bi-search"></i>
+        <input class="form-control" id="market-search" type="search"
+               placeholder="Buscar EUR, JPY, ouro, XAU..." autocomplete="off">
+    </div>
+    <select class="form-select w-auto" id="market-status-filter" aria-label="Filtrar por status">
+        <option value="all">Todos os status</option>
+        <option value="ready">Prontos</option>
+        <option value="pending">A sincronizar</option>
+    </select>
+</div>
+
+<div id="market-catalog">
+    {% for group, items in market_groups.items() %}
+    <section class="tp-market-section" data-market-group="{{ group }}">
+        <div class="tp-section-title">
+            <h2>{{ market_group_labels[group] }}</h2>
+            <span>{{ items|length }} instrumentos</span>
+        </div>
+        <div class="tp-market-grid">
+            {% for item in items %}
+            <article class="tp-market-card {% if item.instrument.code == 'XAUUSD' %}is-gold{% endif %}"
+                     data-market-card
+                     data-search="{{ item.instrument.code }} {{ item.instrument.label }} {{ item.instrument.base }} {{ item.instrument.quote }}"
+                     data-status="{{ 'ready' if item.is_available else 'pending' }}">
+                <div class="tp-market-top">
+                    <div class="tp-market-identity">
+                        <span class="tp-market-icon"><i class="bi {{ item.instrument.icon }}"></i></span>
+                        <div>
+                            <strong>{{ item.instrument.base }}<span class="text-muted">/</span>{{ item.instrument.quote }}</strong>
+                            <span>{{ item.instrument.label }}</span>
+                        </div>
+                    </div>
+                    <span class="tp-market-status {% if item.is_available %}is-ready{% endif %}">
+                        {{ "Pronto" if item.is_available else "A sincronizar" }}
+                    </span>
+                </div>
+
+                {% if item.is_available %}
+                <div class="tp-market-footer">
+                    <span class="tp-market-command">Broker: {{ item.synced_symbol }}</span>
+                    <a class="tp-market-action" href="/dashboard/analysis?symbol={{ item.synced_symbol }}&timeframe=M15">
+                        Analisar <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+                {% else %}
+                <div class="tp-market-footer">
+                    <span class="tp-market-command">Disponível para automação</span>
+                    <a class="tp-market-action"
+                       href="/dashboard/mt5?select={{ item.instrument.code }}#markets">
+                        Selecionar <i class="bi bi-plus-circle"></i>
+                    </a>
+                </div>
+                {% endif %}
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+    {% endfor %}
+</div>
+
+{% if unmapped_symbols %}
+<section>
+    <div class="tp-section-title">
+        <h2>Outros símbolos da corretora</h2>
+        <span>Disponíveis fora do catálogo curado</span>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        {% for symbol in unmapped_symbols %}
+        <a href="/dashboard/analysis?symbol={{ symbol.name }}&timeframe=M15"
+           class="badge rounded-pill text-bg-dark text-decoration-none p-2">
+            <span class="tp-presence"></span>{{ symbol.name }}
+        </a>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+    var search = document.getElementById("market-search");
+    var status = document.getElementById("market-status-filter");
+    var cards = Array.prototype.slice.call(document.querySelectorAll("[data-market-card]"));
+
+    function normalize(value) {
+        return (value || "").toLocaleLowerCase("pt-BR").normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "");
+    }
+
+    function applyFilters() {
+        var term = normalize(search.value);
+        var selectedStatus = status.value;
+        cards.forEach(function (card) {
+            var matchesTerm = normalize(card.dataset.search).indexOf(term) !== -1;
+            var matchesStatus = selectedStatus === "all" || card.dataset.status === selectedStatus;
+            card.classList.toggle("tp-filter-hidden", !(matchesTerm && matchesStatus));
+        });
+        document.querySelectorAll(".tp-market-section").forEach(function (section) {
+            var visible = section.querySelector("[data-market-card]:not(.tp-filter-hidden)");
+            section.classList.toggle("tp-filter-hidden", !visible);
+        });
+    }
+
+    search.addEventListener("input", applyFilters);
+    status.addEventListener("change", applyFilters);
+})();
+</script>
+{% endblock %}

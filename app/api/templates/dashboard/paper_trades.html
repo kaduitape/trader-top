@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Paper trading — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Ambiente sem risco financeiro</span>
+        <h1 class="tp-page-title">Paper trading</h1>
+        <p class="tp-page-description">Histórico de sinais simulados para validar estratégia, execução e gestão antes da conta demo.</p>
+    </div>
+    <a href="/dashboard/analysis" class="btn btn-primary"><i class="bi bi-stars me-2"></i>Nova análise</a>
+</header>
+
+<div class="tp-stat-grid">
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-journal-check"></i></span><span class="tp-stat-copy"><span>Registros exibidos</span><strong>{{ trades|length }}</strong></span></div>
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-hourglass-split"></i></span><span class="tp-stat-copy"><span>Posições abertas</span><strong>{{ open_trade_count }}</strong></span></div>
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-shield-check"></i></span><span class="tp-stat-copy"><span>Capital real</span><strong>Não exposto</strong></span></div>
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-sliders"></i></span><span class="tp-stat-copy"><span>Limite</span><strong>100 recentes</strong></span></div>
+</div>
+
+<div class="tp-market-toolbar">
+    <div class="tp-market-search">
+        <i class="bi bi-search"></i>
+        <input class="form-control" type="search" placeholder="Buscar símbolo, estratégia ou status..."
+               data-table-filter="#paper-trades-table">
+    </div>
+</div>
+
+<div class="card tp-table-card">
+    <div class="table-responsive">
+        <table class="table mb-0" id="paper-trades-table">
+            <thead>
+            <tr><th>#</th><th>Símbolo</th><th>TF</th><th>Estratégia</th><th>Direção</th><th>Status</th><th>Entrada</th><th>Saída</th><th>Motivo</th><th class="text-end">PnL</th></tr>
+            </thead>
+            <tbody>
+            {% for trade, symbol_name in trades %}
+                <tr data-filter-row>
+                    <td class="text-muted">{{ trade.id }}</td>
+                    <td class="tp-symbol">{{ symbol_name }}</td>
+                    <td><span class="badge text-bg-dark">{{ trade.timeframe }}</span></td>
+                    <td>{{ trade.strategy_name }}</td>
+                    <td><span class="tp-direction {% if trade.direction == 'LONG' %}is-long{% else %}is-short{% endif %}"><i class="bi {% if trade.direction == 'LONG' %}bi-arrow-up-right{% else %}bi-arrow-down-right{% endif %}"></i>{{ trade.direction }}</span></td>
+                    <td><span class="badge {% if trade.status == 'OPEN' %}bg-primary{% else %}bg-secondary{% endif %}">{{ trade.status }}</span></td>
+                    <td>{{ trade.entry_price }} <small class="d-block text-muted">{{ trade.entry_time }}</small></td>
+                    <td>{{ trade.exit_price if trade.exit_price is not none else "—" }}</td>
+                    <td class="text-muted">{{ trade.exit_reason or "—" }}</td>
+                    <td class="text-end {% if trade.net_pnl and trade.net_pnl > 0 %}text-success{% elif trade.net_pnl and trade.net_pnl < 0 %}text-danger{% endif %}">{{ trade.net_pnl if trade.net_pnl is not none else "—" }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="10" class="tp-empty-row">Nenhum paper trade registrado.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,328 @@
+{% extends "base.html" %}
+{% block title %}Análise PRO — AI Trader PRO{% endblock %}
+{% block content %}
+<section class="tp-analysis-shell">
+    <header class="tp-analysis-hero mb-4">
+        <div>
+            <span class="tp-eyebrow"><i class="bi bi-cpu me-2"></i>Central quantitativa</span>
+            <h1 class="display-6 fw-bold mb-2">Análise de moedas</h1>
+            <p class="text-muted mb-0">
+                Price Action, estrutura, liquidez e confirmação estatística em nove timeframes.
+            </p>
+        </div>
+        <div class="tp-status-cluster">
+            <span class="tp-status-pill {% if aisa_configured %}is-ok{% else %}is-warning{% endif %}">
+                <span class="tp-live-dot {% if aisa_configured %}tp-dot-success{% else %}tp-dot-warning{% endif %}"></span>
+                MarketPulse {% if aisa_configured %}com chave{% else %}pendente{% endif %}
+            </span>
+            <span class="tp-status-pill is-ok">
+                <i class="bi bi-shield-check me-1"></i>{{ "Automação demo ativa" if trading_automation_enabled else "Somente consultivo" }}
+            </span>
+        </div>
+    </header>
+
+    <div class="card tp-selector-card mb-4">
+        <div class="card-body p-4">
+            <form method="get" action="/dashboard/analysis" class="row g-3 align-items-end">
+                <div class="col-xl-6">
+                    <label for="symbol" class="form-label fw-semibold">Ativo ou par de moedas</label>
+                    <div class="input-group input-group-lg">
+                        <span class="input-group-text"><i class="bi bi-currency-exchange"></i></span>
+                        <select class="form-select" id="symbol" name="symbol" required {% if not symbols %}disabled{% endif %}>
+                            <option value="">Selecione um símbolo sincronizado</option>
+                            <optgroup label="Disponíveis na corretora">
+                            {% for item in symbols %}
+                            <option value="{{ item.name }}" {% if selected_symbol == item.name %}selected{% endif %}>
+                                {{ item.name }}{% if item.description %} — {{ item.description }}{% endif %}
+                            </option>
+                            {% endfor %}
+                            </optgroup>
+                            {% for group, catalog_items in market_groups.items() %}
+                            {% set pending_items = catalog_items|selectattr("is_available", "equalto", false)|list %}
+                            {% if pending_items %}
+                            <optgroup label="{{ market_group_labels[group] }} — aguardando sincronização">
+                                {% for catalog_item in pending_items %}
+                                <option disabled>{{ catalog_item.instrument.base }}/{{ catalog_item.instrument.quote }} — sincronize no MT5</option>
+                                {% endfor %}
+                            </optgroup>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="col-sm-7 col-xl-3">
+                    <label for="timeframe" class="form-label fw-semibold">Timeframe operacional</label>
+                    <select class="form-select form-select-lg" id="timeframe" name="timeframe">
+                        {% for tf in analysis_timeframes %}
+                        <option value="{{ tf }}" {% if selected_timeframe == tf %}selected{% endif %}>
+                            {% if tf == "MN1" %}MN{% else %}{{ tf }}{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-sm-5 col-xl-3 d-grid">
+                    <button type="submit" class="btn btn-primary btn-lg" {% if not symbols %}disabled{% endif %}>
+                        <i class="bi bi-activity me-2"></i>Analisar agora
+                    </button>
+                </div>
+            </form>
+            <div class="tp-policy-strip mt-4">
+                <span><i class="bi bi-check2-circle"></i> Score mínimo <strong>{{ "%.0f"|format(analysis_threshold) }}</strong></span>
+                <span><i class="bi bi-diagram-3"></i> 9 timeframes</span>
+                <span><i class="bi bi-crosshair"></i> R:R mínimo 1:3</span>
+                <span><i class="bi bi-shield-lock"></i> Risco máximo {{ "%.1f"|format(risk_per_trade_pct) }}%</span>
+                <span><i class="bi bi-newspaper"></i> Filtro de notícias</span>
+                <a href="/dashboard/markets" class="ms-auto small text-decoration-none">
+                    Ver catálogo de pares <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-danger d-flex gap-3 align-items-start" role="alert">
+        <i class="bi bi-exclamation-octagon-fill fs-4"></i>
+        <div>
+            <strong>Análise indisponível</strong>
+            <div>{{ error }}</div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not symbols %}
+    <div class="card tp-empty-state">
+        <div class="card-body text-center py-5">
+            <div class="tp-empty-icon"><i class="bi bi-database-x"></i></div>
+            <h2 class="h4 mt-3">Nenhuma moeda sincronizada</h2>
+            <p class="text-muted mx-auto">
+                Conecte o MetaTrader 5 e colete candles para que os símbolos reais da sua
+                corretora apareçam neste seletor.
+            </p>
+            <code>python -m app.cli collect candles --symbol EURUSD --timeframe M15</code>
+        </div>
+    </div>
+    {% elif not report and not error %}
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <div class="card h-100 tp-empty-state">
+                <div class="card-body p-5">
+                    <div class="tp-empty-icon"><i class="bi bi-graph-up-arrow"></i></div>
+                    <h2 class="h3 mt-4">Selecione uma moeda para começar</h2>
+                    <p class="text-muted mb-4">
+                        O motor cruza contexto macro, estrutura, padrões, liquidez, volume,
+                        notícias, fundamentos e correlação. Nenhum sinal é gerado por estimativa.
+                    </p>
+                    <div class="tp-check-list">
+                        <span><i class="bi bi-check-circle-fill"></i>BOS, CHoCH e MSS</span>
+                        <span><i class="bi bi-check-circle-fill"></i>Order Blocks, FVG e sweeps</span>
+                        <span><i class="bi bi-check-circle-fill"></i>Entrada, stop estrutural e três alvos</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card h-100">
+                <div class="card-header">Matriz de decisão</div>
+                <div class="card-body">
+                    {% set initial_factors = [
+                        ("Estrutura", 30), ("Price Action", 25), ("Liquidez", 15),
+                        ("Volume", 10), ("Notícias", 10), ("Fundamentos", 5), ("Correlação", 5)
+                    ] %}
+                    {% for label, weight in initial_factors %}
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>{{ label }}</span><strong>{{ weight }}%</strong>
+                    </div>
+                    <div class="progress tp-weight-progress mb-3">
+                        <div class="progress-bar" style="width: {{ weight * 3 }}%"></div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if report %}
+    {% set enter = report.recommendation == "ENTER" %}
+    <section aria-label="Resultado da análise">
+        <div class="card tp-decision-card {% if enter %}is-enter{% else %}is-blocked{% endif %} mb-4">
+            <div class="card-body p-4 p-xl-5">
+                <div class="row align-items-center g-4">
+                    <div class="col-lg-3 text-center">
+                        <div class="tp-score-ring" style="--score: {{ report.score.total_score }};">
+                            <div>
+                                <strong>{{ "%.1f"|format(report.score.total_score) }}</strong>
+                                <span>SCORE</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <span class="tp-eyebrow">{{ report.symbol }} · {{ report.timeframe.value }}</span>
+                        <h2 class="display-6 fw-bold my-2 {% if enter %}text-success{% else %}text-danger{% endif %}">
+                            {% if enter %}<i class="bi bi-check-circle-fill me-2"></i>OPERAÇÃO ELEGÍVEL
+                            {% else %}<i class="bi bi-slash-circle-fill me-2"></i>NÃO OPERAR{% endif %}
+                        </h2>
+                        <p class="text-muted mb-3">
+                            {% if enter %}
+                            Todos os filtros obrigatórios do motor foram satisfeitos.
+                            {% else %}
+                            Uma ou mais regras objetivas bloquearam a entrada.
+                            {% endif %}
+                        </p>
+                        <div class="d-flex gap-2 flex-wrap">
+                            <span class="badge text-bg-dark">{{ trend_labels.get(report.trend.value, report.trend.value) }}</span>
+                            <span class="badge text-bg-dark">
+                                Padrão: {{ report.dominant_pattern.name.value if report.dominant_pattern else "não confirmado" }}
+                            </span>
+                            <span class="badge text-bg-dark">
+                                Probabilidade estimada: {{ "%.1f"|format(report.probability_estimate) }}%
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-lg-3">
+                        <div class="tp-decision-meta">
+                            <div><span>Regra mínima</span><strong>{{ "%.0f"|format(analysis_threshold) }} pontos</strong></div>
+                            <div><span>Gerado em</span><strong>{{ report.generated_at.strftime("%d/%m/%Y %H:%M") }}</strong></div>
+                            <div><span>Execução</span><strong>{{ "Automática em DEMO" if trading_automation_enabled else "Não automática" }}</strong></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4 mb-4">
+            <div class="col-xl-7">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-bar-chart-steps me-2"></i>Score por evidência</span>
+                        <span class="small text-muted">peso × qualidade</span>
+                    </div>
+                    <div class="card-body">
+                        {% for factor in report.score.factors %}
+                        <article class="tp-factor {% if not loop.last %}mb-4{% endif %}">
+                            <div class="d-flex justify-content-between align-items-end gap-3 mb-2">
+                                <div>
+                                    <h3 class="h6 mb-1">{{ factor_labels.get(factor.name, factor.name) }}</h3>
+                                    <span class="small text-muted">Peso {{ "%.0f"|format(factor.weight * 100) }}% · contribuição {{ "%.1f"|format(factor.weighted_contribution) }}</span>
+                                </div>
+                                <strong class="tp-factor-value">{{ "%.0f"|format(factor.raw_score) }}</strong>
+                            </div>
+                            <div class="progress tp-score-progress" role="progressbar" aria-valuenow="{{ factor.raw_score }}" aria-valuemin="0" aria-valuemax="100">
+                                <div class="progress-bar {% if factor.raw_score >= 90 %}bg-success{% elif factor.raw_score >= 60 %}bg-info{% elif factor.raw_score >= 40 %}bg-warning{% else %}bg-danger{% endif %}" style="width: {{ factor.raw_score }}%"></div>
+                            </div>
+                            <ul class="small text-muted mt-2 mb-0 ps-3">
+                                {% for reason in factor.rationale %}<li>{{ reason }}</li>{% endfor %}
+                            </ul>
+                        </article>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            <div class="col-xl-5">
+                <div class="card mb-4">
+                    <div class="card-header"><i class="bi bi-layers me-2"></i>Alinhamento multi-timeframe</div>
+                    <div class="card-body">
+                        <div class="tp-timeframe-grid">
+                            {% for tf, label in report.multi_timeframe_alignment.items() %}
+                            <div class="tp-timeframe-cell
+                                {% if label == 'SEM_DADOS' %}is-missing
+                                {% elif label == 'UP' %}is-bull
+                                {% elif label == 'DOWN' %}is-bear
+                                {% else %}is-neutral{% endif %}">
+                                <strong>{% if tf.value == "MN1" %}MN{% else %}{{ tf.value }}{% endif %}</strong>
+                                <span>
+                                    {% if label == "UP" %}Alta
+                                    {% elif label == "DOWN" %}Baixa
+                                    {% elif label == "SIDEWAYS" %}Lateral
+                                    {% else %}Sem dados{% endif %}
+                                </span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><i class="bi bi-shield-exclamation me-2"></i>Controles obrigatórios</div>
+                    <div class="card-body tp-control-list">
+                        <div><span>Score ≥ {{ "%.0f"|format(analysis_threshold) }}</span><strong class="{% if report.score.total_score >= analysis_threshold %}text-success{% else %}text-danger{% endif %}">{% if report.score.total_score >= analysis_threshold %}APROVADO{% else %}BLOQUEADO{% endif %}</strong></div>
+                        <div><span>Stop estrutural</span><strong class="{% if report.trade_levels %}text-success{% else %}text-muted{% endif %}">{% if report.trade_levels %}CALCULADO{% else %}INDISPONÍVEL{% endif %}</strong></div>
+                        <div><span>Risco por operação</span><strong>Máx. {{ "%.1f"|format(risk_per_trade_pct) }}%</strong></div>
+                        <div><span>Operações simultâneas</span><strong>Máx. {{ max_simultaneous_positions }}</strong></div>
+                        <div><span>Drawdown diário / semanal</span><strong>3% / 6%</strong></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-crosshair2 me-2"></i>Plano técnico da operação</div>
+            <div class="card-body p-4">
+                {% if report.trade_levels %}
+                <div class="tp-level-grid">
+                    <div class="tp-level is-entry"><span>Entrada</span><strong>{{ price_format|format(report.trade_levels.entry) }}</strong></div>
+                    <div class="tp-level is-stop"><span>Stop loss</span><strong>{{ price_format|format(report.trade_levels.stop_loss) }}</strong><small>estrutura + ATR</small></div>
+                    <div class="tp-level is-target"><span>TP1</span><strong>{{ price_format|format(report.trade_levels.take_profit_1) }}</strong><small>R:R {{ "%.2f"|format(report.trade_levels.risk_reward_1) }}</small></div>
+                    <div class="tp-level is-target"><span>TP2</span><strong>{{ price_format|format(report.trade_levels.take_profit_2) }}</strong><small>R:R {{ "%.2f"|format(report.trade_levels.risk_reward_2) }}</small></div>
+                    <div class="tp-level is-target"><span>TP3</span><strong>{{ price_format|format(report.trade_levels.take_profit_3) }}</strong><small>R:R {{ "%.2f"|format(report.trade_levels.risk_reward_3) }}</small></div>
+                </div>
+                <div class="row g-3 mt-2">
+                    <div class="col-md-6"><div class="tp-inline-metric"><span>Break even</span><strong>{{ price_format|format(report.trade_levels.break_even_price) }}</strong></div></div>
+                    <div class="col-md-6"><div class="tp-inline-metric"><span>Ativação do trailing</span><strong>{{ price_format|format(report.trade_levels.trailing_activation_price) }}</strong></div></div>
+                </div>
+                {% else %}
+                <div class="tp-blocked-plan">
+                    <i class="bi bi-lock-fill"></i>
+                    <div><strong>Níveis não liberados</strong><p class="mb-0 text-muted">Entrada, stop e alvos só são calculados depois que o score e todos os filtros aprovam a oportunidade.</p></div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-6">
+                <div class="card h-100">
+                    <div class="card-header"><i class="bi bi-bezier2 me-2"></i>Confluências detectadas</div>
+                    <div class="card-body">
+                        <ul class="tp-evidence-list">
+                            {% for item in report.confluences %}
+                            <li><i class="bi bi-check2"></i><span>{{ item }}</span></li>
+                            {% else %}
+                            <li class="text-muted"><i class="bi bi-dash"></i><span>Nenhuma confluência forte confirmada.</span></li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="card h-100 {% if not enter %}border-danger{% endif %}">
+                    <div class="card-header"><i class="bi bi-clipboard2-pulse me-2"></i>Justificativa e bloqueios</div>
+                    <div class="card-body">
+                        {% if report.rejection_reasons %}
+                        <h3 class="h6 text-danger">Motivos para não operar</h3>
+                        <ul class="tp-evidence-list mb-4">
+                            {% for item in report.rejection_reasons %}
+                            <li><i class="bi bi-x-lg text-danger"></i><span>{{ item }}</span></li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                        <details>
+                            <summary class="fw-semibold">Ver justificativa completa</summary>
+                            <ul class="small text-muted mt-3 mb-0 ps-3">
+                                {% for item in report.justification %}<li class="mb-2">{{ item }}</li>{% endfor %}
+                            </ul>
+                        </details>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
+    <footer class="tp-analysis-footer mt-4">
+        <i class="bi bi-info-circle me-2"></i>
+        Análise quantitativa consultiva. O painel não envia ordens ao MetaTrader 5.
+        Confirme custos, spread, calendário econômico e limites da conta antes de qualquer execução.
+    </footer>
+</section>
+{% endblock %}

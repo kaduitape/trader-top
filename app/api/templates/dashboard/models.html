@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Modelos — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Machine learning governado</span>
+        <h1 class="tp-page-title">Modelos registrados</h1>
+        <p class="tp-page-description">Versões treinadas, aprovação humana e modelo atualmente promovido para avaliação.</p>
+    </div>
+    <a href="/dashboard/drift" class="btn btn-outline-light"><i class="bi bi-activity me-2"></i>Ver monitoramento</a>
+</header>
+
+<div class="tp-stat-grid">
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-cpu"></i></span><span class="tp-stat-copy"><span>Versões</span><strong>{{ versions|length }}</strong></span></div>
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-patch-check"></i></span><span class="tp-stat-copy"><span>Aprovadas</span><strong>{{ versions|selectattr("approved")|list|length }}</strong></span></div>
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-box-arrow-up-right"></i></span><span class="tp-stat-copy"><span>Versão atual</span><strong>{{ current_version or "—" }}</strong></span></div>
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-person-check"></i></span><span class="tp-stat-copy"><span>Governança</span><strong>Manual</strong></span></div>
+</div>
+
+<div class="card tp-table-card">
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead><tr><th>Versão</th><th>Modelo</th><th>Símbolo</th><th>TF</th><th>Estratégia</th><th>Treinado em</th><th>Aprovação</th><th>Deploy</th></tr></thead>
+            <tbody>
+            {% for entry in versions %}
+                <tr>
+                    <td class="tp-symbol">{{ entry.version }}</td>
+                    <td>{{ entry.model_name }}</td>
+                    <td>{{ entry.symbol }}</td>
+                    <td><span class="badge text-bg-dark">{{ entry.timeframe }}</span></td>
+                    <td>{{ entry.strategy_name }}</td>
+                    <td class="text-muted">{{ entry.trained_at }}</td>
+                    <td><span class="badge {% if entry.approved %}bg-success{% else %}bg-secondary{% endif %}">{{ "Aprovado" if entry.approved else "Pendente" }}</span></td>
+                    <td>{% if entry.version == current_version %}<span class="badge bg-primary"><span class="tp-live-dot tp-dot-success"></span>Atual</span>{% else %}—{% endif %}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="8" class="tp-empty-row">Nenhum modelo registrado.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+<div class="tp-context-note mt-4"><i class="bi bi-shield-check"></i><div>Aprovação é sempre manual via CLI. Treinar um modelo nunca o promove automaticamente.</div></div>
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Modo operacional — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Controle de segurança</span>
+        <h1 class="tp-page-title">Modo operacional</h1>
+        <p class="tp-page-description">Controle explícito do que o sistema pode executar. Toda transição exige confirmação textual e fica auditada.</p>
+    </div>
+    <a href="/dashboard/audit-log" class="btn btn-outline-light"><i class="bi bi-shield-check me-2"></i>Ver auditoria</a>
+</header>
+
+{% if error %}<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon me-2"></i>{{ error }}</div>{% endif %}
+{% if changed_to %}<div class="alert alert-success" role="alert"><i class="bi bi-check-circle me-2"></i>Modo alterado para {{ changed_to }}.</div>{% endif %}
+
+<div class="row g-4">
+    <div class="col-xl-5">
+        <div class="card h-100">
+            <div class="card-header">Estado atual</div>
+            <div class="card-body p-4">
+                <div class="tp-mode-current
+                    {% if current_mode == 'EMERGENCY_STOP' %}is-danger
+                    {% elif current_mode == 'DEMO' %}is-warning
+                    {% elif current_mode in ['PAPER', 'DATA_ONLY', 'BACKTEST', 'REPLAY'] %}is-active{% endif %}">
+                    <span class="tp-mode-icon"><i class="bi bi-toggle2-on"></i></span>
+                    <div>
+                        <span>Modo em execução</span>
+                        <strong>{{ current_mode }}</strong>
+                    </div>
+                </div>
+                <div class="tp-mode-ladder mt-4">
+                    {% for mode, label in [
+                        ("DISABLED", "Sistema sem execução"),
+                        ("DATA_ONLY", "Somente coleta de dados"),
+                        ("BACKTEST", "Pesquisa histórica"),
+                        ("REPLAY", "Reprodução de mercado"),
+                        ("PAPER", "Simulação sem broker"),
+                        ("DEMO", "Execução em conta demo")
+                    ] %}
+                    <div class="tp-mode-step {% if current_mode == mode %}active{% endif %}">
+                        <span></span><div><strong>{{ mode }}</strong><small>{{ label }}</small></div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-7">
+        <div class="card">
+            <div class="card-header"><i class="bi bi-arrow-left-right me-2"></i>Solicitar transição</div>
+            <div class="card-body p-4">
+                {% if not allowed_targets %}
+                <div class="tp-context-note"><i class="bi bi-lock"></i><div>Nenhuma transição está disponível a partir de {{ current_mode }}.</div></div>
+                {% else %}
+                <form method="post" action="/dashboard/mode">
+                    <div class="mb-4">
+                        <label for="target_mode" class="form-label fw-semibold">Novo modo</label>
+                        <select class="form-select form-select-lg" id="target_mode" name="target_mode" required
+                                onchange="document.getElementById('confirm_hint').textContent = this.value;">
+                            <option value="" disabled selected>Selecione uma transição permitida</option>
+                            {% for target in allowed_targets %}<option value="{{ target }}">{{ target }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-4">
+                        <label for="confirm_text" class="form-label fw-semibold">Confirmação textual</label>
+                        <input type="text" class="form-control" id="confirm_text" name="confirm_text"
+                               placeholder="Digite exatamente: " required autocomplete="off"
+                               aria-describedby="confirm-help">
+                        <div class="form-text" id="confirm-help">Digite <strong id="confirm_hint">o modo escolhido</strong> para evitar mudanças acidentais.</div>
+                    </div>
+                    <div class="mb-4">
+                        <label for="reason" class="form-label fw-semibold">Justificativa</label>
+                        <input type="text" class="form-control" id="reason" name="reason"
+                               placeholder="Ex.: validação de estratégia EURUSD em conta demo">
+                    </div>
+                    <button type="submit" class="btn btn-warning"><i class="bi bi-shield-exclamation me-2"></i>Confirmar mudança</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        <div class="tp-context-note mt-4"><i class="bi bi-lock-fill"></i><div><strong>Capital real permanece bloqueado.</strong> REAL_LOCKED e REAL_ENABLED nunca são oferecidos. A validação é a mesma usada pela CLI.</div></div>
+    </div>
+</div>
+{% endblock %}

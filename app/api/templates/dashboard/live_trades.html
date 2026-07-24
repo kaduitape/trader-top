@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Conta demo — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Execução controlada</span>
+        <h1 class="tp-page-title">Conta demo</h1>
+        <p class="tp-page-description">Ordens enviadas à conta de demonstração, incluindo rejeições de risco e reconciliação com o MT5.</p>
+    </div>
+    <a href="/dashboard/mode" class="btn btn-outline-light"><i class="bi bi-toggle2-on me-2"></i>Ver modo operacional</a>
+</header>
+
+<div class="tp-stat-grid">
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-broadcast-pin"></i></span><span class="tp-stat-copy"><span>Registros exibidos</span><strong>{{ trades|length }}</strong></span></div>
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-shield-lock"></i></span><span class="tp-stat-copy"><span>Conta</span><strong>Demonstração</strong></span></div>
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-percent"></i></span><span class="tp-stat-copy"><span>Risco por operação</span><strong>Máx. 1%</strong></span></div>
+    <div class="tp-stat-card"><span class="tp-stat-icon"><i class="bi bi-stack"></i></span><span class="tp-stat-copy"><span>Posições simultâneas</span><strong>Máx. 3</strong></span></div>
+</div>
+
+<div class="tp-market-toolbar">
+    <div class="tp-market-search"><i class="bi bi-search"></i><input class="form-control" type="search" placeholder="Buscar símbolo, ticket, estado..." data-table-filter="#live-trades-table"></div>
+</div>
+
+<div class="card tp-table-card">
+    <div class="table-responsive">
+        <table class="table mb-0" id="live-trades-table">
+            <thead><tr><th>#</th><th>Símbolo</th><th>TF</th><th>Estratégia</th><th>Direção</th><th>Estado</th><th>Ticket MT5</th><th>Entrada</th><th>Saída</th><th>Rejeição</th><th class="text-end">PnL</th></tr></thead>
+            <tbody>
+            {% for trade, symbol_name in trades %}
+                <tr data-filter-row>
+                    <td class="text-muted">{{ trade.id }}</td>
+                    <td class="tp-symbol">{{ symbol_name }}</td>
+                    <td><span class="badge text-bg-dark">{{ trade.timeframe }}</span></td>
+                    <td>{{ trade.strategy_name }}</td>
+                    <td><span class="tp-direction {% if trade.direction == 'LONG' %}is-long{% else %}is-short{% endif %}">{{ trade.direction }}</span></td>
+                    <td><span class="badge {% if trade.order_state == 'POSITION_OPEN' %}bg-primary{% elif trade.order_state == 'CLOSED' %}bg-secondary{% elif trade.order_state in ['RISK_REJECTED', 'REJECTED', 'CANCELLED'] %}bg-danger{% elif trade.order_state == 'RECONCILING' %}bg-warning text-dark{% else %}text-bg-dark{% endif %}">{{ trade.order_state }}</span></td>
+                    <td>{{ trade.mt5_position_ticket or "—" }}</td>
+                    <td>{% if trade.entry_price is not none %}{{ trade.entry_price }}<small class="d-block text-muted">{{ trade.entry_time }}</small>{% else %}—{% endif %}</td>
+                    <td>{{ trade.exit_price if trade.exit_price is not none else "—" }}</td>
+                    <td class="text-muted">{{ trade.rejection_reason or "—" }}</td>
+                    <td class="text-end {% if trade.net_pnl and trade.net_pnl > 0 %}text-success{% elif trade.net_pnl and trade.net_pnl < 0 %}text-danger{% endif %}">{{ trade.net_pnl if trade.net_pnl is not none else "—" }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="11" class="tp-empty-row">Nenhuma operação demo registrada.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+<div class="tp-context-note mt-4"><i class="bi bi-info-circle"></i><div>Esta área representa apenas conta demo. Execução com capital real permanece bloqueada pelo sistema.</div></div>
+{% endblock %}

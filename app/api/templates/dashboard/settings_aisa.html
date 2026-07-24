@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}MarketPulse — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Dados externos</span>
+        <h1 class="tp-page-title">MarketPulse · AIsa</h1>
+        <p class="tp-page-description">Notícias, sentimento e métricas financeiras usados como confirmação — nunca como gatilho isolado.</p>
+    </div>
+    <a href="/dashboard/analysis" class="btn btn-outline-light"><i class="bi bi-stars me-2"></i>Voltar à análise</a>
+</header>
+
+{% if error %}<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon me-2"></i>{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert alert-success" role="alert"><i class="bi bi-check-circle me-2"></i>Configuração salva com auditoria.</div>{% endif %}
+
+<div class="row g-4">
+    <div class="col-xl-4">
+        <div class="card h-100">
+            <div class="card-header">Status da integração</div>
+            <div class="card-body">
+                <div class="tp-integration-status {% if masked_key %}is-ready{% endif %}">
+                    <span class="tp-integration-icon"><i class="bi {% if masked_key %}bi-cloud-check{% else %}bi-cloud-slash{% endif %}"></i></span>
+                    <div>
+                        <span class="badge {% if masked_key %}bg-success{% else %}bg-secondary{% endif %} mb-2">
+                            {{ "CONFIGURADA" if masked_key else "NAO CONFIGURADA" }}
+                        </span>
+                        <strong>{{ "Chave configurada" if masked_key else "Configuração pendente" }}</strong>
+                        <span>{{ "MarketPulse será consultado nas análises." if masked_key else "Notícias e fundamentos ficam neutros e bloqueiam o modo profissional." }}</span>
+                    </div>
+                </div>
+                {% if masked_key %}
+                <dl class="tp-detail-list mt-4">
+                    <div><dt>Credencial</dt><dd><code>{{ masked_key }}</code></dd></div>
+                    <div><dt>Origem</dt><dd>{{ "Dashboard seguro" if key_source == "dashboard" else "Variável de ambiente" }}</dd></div>
+                    <div><dt>URL base</dt><dd class="text-break">{{ base_url }}</dd></div>
+                </dl>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        <div class="card">
+            <div class="card-header"><i class="bi bi-key me-2"></i>Configuração segura</div>
+            <div class="card-body p-4">
+                <form method="post" action="/dashboard/settings/aisa">
+                    <div class="mb-4">
+                        <label for="api_key" class="form-label fw-semibold">Chave da API AIsa</label>
+                        <input type="password" class="form-control form-control-lg" id="api_key"
+                               name="api_key" placeholder="Deixe em branco para manter a chave atual"
+                               autocomplete="new-password">
+                        <div class="form-text">A chave nunca volta em texto puro para o navegador ou auditoria.</div>
+                    </div>
+                    <div class="mb-4">
+                        <label for="api_base_url" class="form-label fw-semibold">URL base</label>
+                        <input type="url" class="form-control" id="api_base_url" name="api_base_url"
+                               value="{{ base_url }}" placeholder="https://api.aisa.one">
+                    </div>
+                    <div class="d-flex flex-wrap gap-3 align-items-center">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-shield-check me-2"></i>Salvar configuração</button>
+                        {% if masked_key %}
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="remove_key" name="remove_key">
+                            <label class="form-check-label text-danger" for="remove_key">Remover a chave atual</label>
+                        </div>
+                        {% endif %}
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="tp-context-note mt-4">
+            <i class="bi bi-info-circle"></i>
+            <div>Falhas HTTP, respostas vazias ou métricas não reconhecidas nunca são convertidas em evidência positiva. O relatório mostra a indisponibilidade e bloqueia a entrada profissional.</div>
+        </div>
+    </div>
+</div>
+{% endblock %}

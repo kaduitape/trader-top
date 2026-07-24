@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block title %}Conexão MT5 — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Integração nativa Windows</span>
+        <h1 class="tp-page-title">Conexão MetaTrader 5</h1>
+        <p class="tp-page-description">
+            Controle a conexão, os ativos e a coleta contínua sem usar comandos no terminal.
+        </p>
+    </div>
+    <div class="tp-live-state {% if worker_online and status.connected %}is-online{% elif worker_online %}is-waiting{% endif %}"
+         data-mt5-state-box>
+        <span class="tp-live-state-dot"></span>
+        <span>
+            <small>Conector Windows</small>
+            <strong data-mt5-state>{{ status.state if worker_online else "OFFLINE" }}</strong>
+        </span>
+    </div>
+</header>
+
+{% if saved %}
+<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i>Plano de sincronização salvo.</div>
+{% endif %}
+{% if action_result %}
+<div class="alert alert-info"><i class="bi bi-broadcast me-2"></i>{{ action_result }}. O conector processará a solicitação automaticamente.</div>
+{% endif %}
+{% if error %}
+<div class="alert alert-danger"><i class="bi bi-exclamation-triangle me-2"></i>{{ error }}</div>
+{% endif %}
+
+<div class="tp-stat-grid">
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-pc-display"></i></span>
+        <span class="tp-stat-copy">
+            <span>Worker Windows</span>
+            <strong data-worker-online>{{ "Online" if worker_online else "Offline" }}</strong>
+        </span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-hdd-network"></i></span>
+        <span class="tp-stat-copy">
+            <span>Terminal MT5</span>
+            <strong data-terminal-connection>{{ "Conectado" if worker_online and status.connected else "Desconectado" }}</strong>
+        </span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-collection"></i></span>
+        <span class="tp-stat-copy">
+            <span>Ativos monitorados</span>
+            <strong data-symbol-coverage>{{ status.ready_symbols }}/{{ config.symbols|length }}</strong>
+        </span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-clock-history"></i></span>
+        <span class="tp-stat-copy">
+            <span>Última sincronização</span>
+            <strong class="tp-stat-value-sm" data-last-sync>{{ status.last_sync_at or "Aguardando" }}</strong>
+        </span>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-xl-8">
+        <section class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-sliders me-2"></i>Controle da automação</span>
+                <span class="badge {% if config.enabled %}bg-success{% else %}text-bg-dark{% endif %}">
+                    {{ "ATIVA" if config.enabled else "PAUSADA" }}
+                </span>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-4">
+                    Quando ativa, a coleta permanece ligada em segundo plano, reconecta após
+                    interrupções e atualiza somente os dados que ainda não estão no banco.
+                </p>
+                <div class="tp-control-actions">
+                    <form method="post" action="/dashboard/mt5/action">
+                        <input type="hidden" name="requested_action" value="{{ 'pause' if config.enabled else 'start' }}">
+                        <button class="btn {% if config.enabled %}btn-outline-warning{% else %}btn-success{% endif %}" type="submit">
+                            <i class="bi {% if config.enabled %}bi-pause-circle{% else %}bi-play-circle{% endif %} me-2"></i>
+                            {{ "Pausar automação" if config.enabled else "Ativar automação" }}
+                        </button>
+                    </form>
+                    <form method="post" action="/dashboard/mt5/action">
+                        <input type="hidden" name="requested_action" value="sync">
+                        <button class="btn btn-primary" type="submit" {% if not config.enabled %}disabled{% endif %}>
+                            <i class="bi bi-arrow-repeat me-2"></i>Atualizar agora
+                        </button>
+                    </form>
+                    <form method="post" action="/dashboard/mt5/action">
+                        <input type="hidden" name="requested_action" value="test">
+                        <button class="btn btn-outline-light" type="submit">
+                            <i class="bi bi-plug me-2"></i>Testar conexão
+                        </button>
+                    </form>
+                </div>
+                <div class="tp-sync-error {% if not status.last_error %}d-none{% endif %}" data-sync-error>
+                    <i class="bi bi-exclamation-octagon"></i>
+                    <span data-sync-error-text>{{ status.last_error or "" }}</span>
+                </div>
+            </div>
+        </section>
+    </div>
+    <div class="col-xl-4">
+        <section class="card h-100">
+            <div class="card-header"><i class="bi bi-shield-lock me-2"></i>Sessão conectada</div>
+            <div class="card-body">
+                <dl class="tp-connection-details">
+                    <div><dt>Terminal</dt><dd data-terminal-name>{{ status.terminal_name or "—" }}</dd></div>
+                    <div><dt>Corretora</dt><dd data-company>{{ status.company or "—" }}</dd></div>
+                    <div><dt>Servidor</dt><dd data-broker-server>{{ status.broker_server or "—" }}</dd></div>
+                    <div><dt>Conta</dt><dd data-account-login>{{ status.account_login or "—" }}</dd></div>
+                    <div>
+                        <dt>Ambiente</dt>
+                        <dd data-account-mode>
+                            {% if status.account_is_demo is sameas true %}DEMO{% elif status.account_is_demo is sameas false %}REAL{% else %}—{% endif %}
+                        </dd>
+                    </div>
+                </dl>
+                <div class="tp-security-note">
+                    <i class="bi bi-key"></i>
+                    <span>A senha da corretora fica somente no Windows e nunca é enviada ao navegador.</span>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+
+{% if not worker_online %}
+<section class="tp-connector-setup mb-4">
+    <div class="tp-setup-number">1</div>
+    <div>
+        <span class="tp-eyebrow">Configuração única</span>
+        <h2>Instale o conector no Windows</h2>
+        <p>
+            Mantenha o MetaTrader 5 instalado e autenticado. Baixe o instalador, dê dois
+            cliques e o conector passará a iniciar automaticamente com o Windows.
+        </p>
+        <a class="btn btn-primary" href="/dashboard/mt5/installer">
+            <i class="bi bi-windows me-2"></i>Baixar instalador de um clique
+        </a>
+    </div>
+    <div class="tp-setup-flow">
+        <span><i class="bi bi-check2"></i> Instala isoladamente</span>
+        <span><i class="bi bi-check2"></i> Inicia no login</span>
+        <span><i class="bi bi-check2"></i> Reconecta sozinho</span>
+    </div>
+</section>
+{% endif %}
+
+<form method="post" action="/dashboard/mt5/config" id="mt5-config-form">
+    <div class="row g-4">
+        <div class="col-xl-8">
+            <section class="card" id="markets">
+                <div class="card-header d-flex flex-wrap gap-3 justify-content-between align-items-center">
+                    <span><i class="bi bi-currency-exchange me-2"></i>Ativos sincronizados</span>
+                    <div class="tp-selection-tools">
+                        <button type="button" class="btn btn-sm btn-link" data-select-preset="recommended">Principais + metais</button>
+                        <button type="button" class="btn btn-sm btn-link" data-select-preset="all">Selecionar todos</button>
+                        <button type="button" class="btn btn-sm btn-link text-muted" data-select-preset="none">Limpar</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">Escolha apenas o que deseja monitorar. XAU/USD e XAG/USD já estão incluídos.</p>
+                    {% for group, instruments in market_groups.items() %}
+                    <div class="tp-symbol-group">
+                        <div class="tp-symbol-group-title">
+                            <strong>{{ market_group_labels[group] }}</strong>
+                            <span>{{ instruments|length }} disponíveis</span>
+                        </div>
+                        <div class="tp-symbol-selector-grid">
+                            {% for instrument in instruments %}
+                            <label class="tp-symbol-option {% if instrument.code == 'XAUUSD' %}is-gold{% endif %}">
+                                <input class="form-check-input" type="checkbox" name="symbols"
+                                       value="{{ instrument.code }}"
+                                       data-symbol-code="{{ instrument.code }}"
+                                       data-symbol-group="{{ group }}"
+                                       {% if instrument.code in selected_codes %}checked{% endif %}>
+                                <span>
+                                    <strong>{{ instrument.base }}/{{ instrument.quote }}</strong>
+                                    <small>{{ instrument.label }}</small>
+                                </span>
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+        <div class="col-xl-4">
+            <section class="card tp-sticky-settings">
+                <div class="card-header"><i class="bi bi-speedometer2 me-2"></i>Frequência e histórico</div>
+                <div class="card-body">
+                    <label class="form-label" for="interval-seconds">Atualizar a cada</label>
+                    <div class="input-group mb-3">
+                        <input class="form-control" id="interval-seconds" type="number"
+                               name="interval_seconds" min="5" max="3600"
+                               value="{{ config.interval_seconds }}">
+                        <span class="input-group-text">segundos</span>
+                    </div>
+
+                    <label class="form-label" for="backfill-count">Histórico inicial por timeframe</label>
+                    <div class="input-group mb-3">
+                        <input class="form-control" id="backfill-count" type="number"
+                               name="candle_backfill_count" min="200" max="100000"
+                               value="{{ config.candle_backfill_count }}">
+                        <span class="input-group-text">candles</span>
+                    </div>
+
+                    <div class="form-check form-switch tp-switch-row">
+                        <input class="form-check-input" id="collect-ticks" type="checkbox"
+                               name="collect_ticks" value="1" {% if config.collect_ticks %}checked{% endif %}>
+                        <label class="form-check-label" for="collect-ticks">
+                            <strong>Coletar ticks</strong>
+                            <span>Bid, ask, volume e spread para leitura de fluxo.</span>
+                        </label>
+                    </div>
+
+                    <div class="tp-timeframe-matrix">
+                        <span>Matriz automática</span>
+                        <div>
+                            {% for timeframe in config.timeframes %}
+                            <span>{{ timeframe }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary w-100 mt-4" type="submit">
+                        <i class="bi bi-check2-circle me-2"></i>Salvar plano automático
+                    </button>
+                    <p class="small text-muted text-center mt-3 mb-0">
+                        Alterações são percebidas pelo conector em até 5 segundos.
+                    </p>
+                </div>
+            </section>
+        </div>
+    </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+    "use strict";
+    var recommended = new Set(["XAUUSD", "XAGUSD", "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD"]);
+
+    document.querySelectorAll("[data-select-preset]").forEach(function (button) {
+        button.addEventListener("click", function () {
+            var preset = button.dataset.selectPreset;
+            document.querySelectorAll("[data-symbol-code]").forEach(function (checkbox) {
+                checkbox.checked = preset === "all" || (preset === "recommended" && recommended.has(checkbox.dataset.symbolCode));
+                if (preset === "none") checkbox.checked = false;
+            });
+        });
+    });
+
+    function valueOrDash(value) {
+        return value === null || value === undefined || value === "" ? "—" : String(value);
+    }
+
+    function formatTimestamp(value) {
+        if (!value) return "Aguardando";
+        var parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return value;
+        return parsed.toLocaleString("pt-BR", {
+            day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
+        });
+    }
+
+    function updateStatus(status) {
+        var stateLabels = {
+            ONLINE: "Online", OFFLINE: "Offline", PAUSED: "Pausado",
+            CONNECTING: "Conectando", SYNCING: "Sincronizando", ERROR: "Atenção",
+            STARTING: "Iniciando"
+        };
+        var stateBox = document.querySelector("[data-mt5-state-box]");
+        stateBox.classList.toggle("is-online", status.connected);
+        stateBox.classList.toggle("is-waiting", status.worker_online && !status.connected);
+        document.querySelector("[data-mt5-state]").textContent = stateLabels[status.state] || status.state;
+        document.querySelector("[data-worker-online]").textContent = status.worker_online ? "Online" : "Offline";
+        document.querySelector("[data-terminal-connection]").textContent = status.connected ? "Conectado" : "Desconectado";
+        document.querySelector("[data-symbol-coverage]").textContent = status.ready_symbols + "/" + status.selected_symbols;
+        document.querySelector("[data-last-sync]").textContent = formatTimestamp(status.last_sync_at);
+        document.querySelector("[data-terminal-name]").textContent = valueOrDash(status.terminal_name);
+        document.querySelector("[data-company]").textContent = valueOrDash(status.company);
+        document.querySelector("[data-broker-server]").textContent = valueOrDash(status.broker_server);
+        document.querySelector("[data-account-login]").textContent = valueOrDash(status.account_login);
+        document.querySelector("[data-account-mode]").textContent =
+            status.account_is_demo === true ? "DEMO" : (status.account_is_demo === false ? "REAL" : "—");
+        var errorBox = document.querySelector("[data-sync-error]");
+        errorBox.classList.toggle("d-none", !status.last_error);
+        document.querySelector("[data-sync-error-text]").textContent = status.last_error || "";
+    }
+
+    function pollStatus() {
+        fetch("/dashboard/mt5/status", {headers: {"Accept": "application/json"}})
+            .then(function (response) { if (response.ok) return response.json(); throw new Error("status"); })
+            .then(updateStatus)
+            .catch(function () {});
+    }
+
+    pollStatus();
+    window.setInterval(pollStatus, 5000);
+})();
+</script>
+{% endblock %}

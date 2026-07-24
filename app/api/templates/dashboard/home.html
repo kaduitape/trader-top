@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Visão geral — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Cockpit operacional</span>
+        <h1 class="tp-page-title">Visão geral</h1>
+        <p class="tp-page-description">
+            Estado do ambiente, cobertura de mercado e atividades recentes em um único lugar.
+        </p>
+    </div>
+    <a href="/dashboard/analysis" class="btn btn-primary">
+        <i class="bi bi-stars me-2"></i>Nova análise
+    </a>
+</header>
+
+<div class="tp-stat-grid">
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-toggle2-on"></i></span>
+        <span class="tp-stat-copy">
+            <span>Modo do sistema</span>
+            <strong class="{% if system_mode == 'EMERGENCY_STOP' %}text-danger{% elif system_mode == 'DEMO' %}text-warning{% endif %}">
+                {{ system_mode }}
+            </strong>
+        </span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-currency-exchange"></i></span>
+        <span class="tp-stat-copy"><span>Símbolos sincronizados</span><strong>{{ synced_symbol_count }}</strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-layers"></i></span>
+        <span class="tp-stat-copy"><span>Cobertura completa 9TF</span><strong>{{ full_coverage_count }}</strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-database-check"></i></span>
+        <span class="tp-stat-copy"><span>Candles armazenados</span><strong>{{ "{:,}".format(total_candles) }}</strong></span>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-xl-8">
+        <div class="card h-100 tp-readiness-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-clipboard2-pulse me-2"></i>Prontidão para análise</span>
+                <a href="/dashboard/markets" class="small text-decoration-none">Gerenciar mercados</a>
+            </div>
+            <div class="card-body">
+                <div class="tp-readiness-grid">
+                    <div class="tp-readiness-item">
+                        <span class="tp-readiness-check {% if mt5_connected %}is-ready{% endif %}">
+                            <i class="bi {% if mt5_connected %}bi-check-lg{% else %}bi-dash{% endif %}"></i>
+                        </span>
+                        <div>
+                            <strong>Conexão MetaTrader 5</strong>
+                            <span>
+                                {% if mt5_connected %}Terminal conectado
+                                {% elif mt5_worker_online %}Conector aguardando terminal
+                                {% else %}Conector Windows offline{% endif %}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="tp-readiness-item">
+                        <span class="tp-readiness-check {% if full_coverage_count %}is-ready{% endif %}">
+                            <i class="bi {% if full_coverage_count %}bi-check-lg{% else %}bi-dash{% endif %}"></i>
+                        </span>
+                        <div>
+                            <strong>Matriz multi-timeframe</strong>
+                            <span>{{ full_coverage_count }} ativo(s) com os 9 timeframes</span>
+                        </div>
+                    </div>
+                    <div class="tp-readiness-item">
+                        <span class="tp-readiness-check {% if aisa_configured %}is-ready{% endif %}">
+                            <i class="bi {% if aisa_configured %}bi-check-lg{% else %}bi-dash{% endif %}"></i>
+                        </span>
+                        <div>
+                            <strong>MarketPulse</strong>
+                            <span>{{ "Chave configurada" if aisa_configured else "Configuração pendente" }}</span>
+                        </div>
+                    </div>
+                    <div class="tp-readiness-item">
+                        <span class="tp-readiness-check {% if critical_drift_count == 0 %}is-ready{% endif %}">
+                            <i class="bi {% if critical_drift_count == 0 %}bi-check-lg{% else %}bi-exclamation-lg{% endif %}"></i>
+                        </span>
+                        <div>
+                            <strong>Monitoramento</strong>
+                            <span>{{ critical_drift_count }} alerta(s) crítico(s) recente(s)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-lightning-charge me-2"></i>Ações rápidas</div>
+            <div class="card-body d-grid gap-2">
+                <a href="/dashboard/analysis" class="tp-quick-action">
+                    <span class="tp-quick-icon"><i class="bi bi-stars"></i></span>
+                    <span><strong>Analisar mercado</strong><small>Score e plano técnico</small></span>
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+                <a href="/dashboard/mt5" class="tp-quick-action">
+                    <span class="tp-quick-icon"><i class="bi bi-pc-display-horizontal"></i></span>
+                    <span><strong>Automação do MT5</strong><small>Conexão, ativos e sincronização</small></span>
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+                <a href="/dashboard/market-data" class="tp-quick-action">
+                    <span class="tp-quick-icon"><i class="bi bi-database-check"></i></span>
+                    <span><strong>Verificar cobertura</strong><small>Candles e ticks coletados</small></span>
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-xl-6">
+        <div class="card tp-table-card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Paper trades recentes</span>
+                <a href="/dashboard/paper-trades" class="small text-decoration-none">Ver histórico</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead><tr><th>Símbolo</th><th>Direção</th><th>Status</th><th class="text-end">PnL</th></tr></thead>
+                    <tbody>
+                    {% for trade, symbol_name in recent_paper_trades %}
+                        <tr>
+                            <td class="tp-symbol">{{ symbol_name }}</td>
+                            <td><span class="tp-direction {% if trade.direction == 'LONG' %}is-long{% else %}is-short{% endif %}"><i class="bi {% if trade.direction == 'LONG' %}bi-arrow-up-right{% else %}bi-arrow-down-right{% endif %}"></i>{{ trade.direction }}</span></td>
+                            <td><span class="badge text-bg-dark">{{ trade.status }}</span></td>
+                            <td class="text-end {% if trade.net_pnl and trade.net_pnl > 0 %}text-success{% elif trade.net_pnl and trade.net_pnl < 0 %}text-danger{% endif %}">{{ trade.net_pnl if trade.net_pnl is not none else "—" }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="4" class="tp-empty-row">Nenhum paper trade registrado.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-6">
+        <div class="card tp-table-card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Conta demo recente</span>
+                <a href="/dashboard/live-trades" class="small text-decoration-none">Ver histórico</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead><tr><th>Símbolo</th><th>Direção</th><th>Estado</th><th class="text-end">PnL</th></tr></thead>
+                    <tbody>
+                    {% for trade, symbol_name in recent_live_trades %}
+                        <tr>
+                            <td class="tp-symbol">{{ symbol_name }}</td>
+                            <td><span class="tp-direction {% if trade.direction == 'LONG' %}is-long{% else %}is-short{% endif %}">{{ trade.direction }}</span></td>
+                            <td><span class="badge text-bg-dark">{{ trade.order_state }}</span></td>
+                            <td class="text-end {% if trade.net_pnl and trade.net_pnl > 0 %}text-success{% elif trade.net_pnl and trade.net_pnl < 0 %}text-danger{% endif %}">{{ trade.net_pnl if trade.net_pnl is not none else "—" }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="4" class="tp-empty-row">Nenhuma operação demo registrada.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-6">
+        <div class="card tp-table-card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Monitoramento recente</span>
+                <a href="/dashboard/drift" class="small text-decoration-none">Ver detalhes</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead><tr><th>Severidade</th><th>Métrica</th><th>Detalhe</th></tr></thead>
+                    <tbody>
+                    {% for event in recent_drift %}
+                        <tr>
+                            <td><span class="badge {% if event.severity == 'CRITICAL' %}bg-danger{% else %}bg-warning text-dark{% endif %}">{{ event.severity }}</span></td>
+                            <td>{{ event.metric_name }}</td>
+                            <td class="text-muted">{{ event.detail }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="3" class="tp-empty-row">Nenhum evento de drift.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-6">
+        <div class="card tp-table-card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Auditoria recente</span>
+                <a href="/dashboard/audit-log" class="small text-decoration-none">Ver trilha completa</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead><tr><th>Quando</th><th>Ação</th><th>Resultado</th></tr></thead>
+                    <tbody>
+                    {% for entry in recent_audit %}
+                        <tr>
+                            <td class="text-muted">{{ entry.occurred_at }}</td>
+                            <td>{{ entry.action }}</td>
+                            <td><span class="badge {% if entry.result == 'SUCCESS' %}bg-success{% else %}bg-danger{% endif %}">{{ entry.result }}</span></td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="3" class="tp-empty-row">Nenhum evento de auditoria.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

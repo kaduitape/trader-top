@@ -1,0 +1,37 @@
+# Ambiente e segredos
+.env
+.venv/
+.venv-mt5/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Logs e artefatos gerados
+logs/*.log
+reports/*
+models/*.pkl
+models/*.joblib
+models/*.json
+models/*_test.csv
+datasets/*.csv
+!reports/.gitkeep
+!models/.gitkeep
+!datasets/.gitkeep
+
+# Testes e cobertura
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Editor / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Notebooks
+.ipynb_checkpoints/
