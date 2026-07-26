@@ -51,6 +51,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.apexflow.config import load_apexflow_config
+from app.apexflow.engine import analyze as apexflow_analyze
+from app.apexflow.mtf import UnsupportedEntryTimeframeError
 from app.backtesting.comparison import build_comparison_row, format_comparison_table
 from app.backtesting.costs import CostModel
 from app.backtesting.engine import BacktestConfig, BacktestResult, CandleBacktestEngine
@@ -66,6 +69,9 @@ from app.core.exceptions import MT5ConnectionError, MT5RealAccountError
 from app.core.logging import configure_logging
 from app.core.system_mode import SystemModeError
 from app.database.models.candle import Candle
+from app.database.repositories.apexflow_decision_repository import (
+    ApexFlowDecisionRepository,
+)
 from app.database.repositories.candle_repository import CandleRepository
 from app.database.repositories.data_quality_repository import DataQualityEventRepository
 from app.database.repositories.drift_event_repository import DriftEventRepository
@@ -1711,6 +1717,154 @@ def cmd_autopilot_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_apexflow_analyze(args: argparse.Namespace) -> int:
+    """Roda o motor ApexFlow sobre os dados JA coletados e explica a decisao.
+
+    Consultivo: nao envia ordem nem grava no Learning Engine (para isso o
+    motor precisa rodar dentro do piloto automatico). Util para inspecionar
+    por que o robo esta (ou nao esta) operando.
+    """
+    timeframe = Timeframe(args.timeframe)
+    session = get_session_factory()()
+    try:
+        config = load_apexflow_config(session)
+        if args.min_confidence is not None:
+            config = dataclasses.replace(config, min_confidence=args.min_confidence)
+        try:
+            analysis = apexflow_analyze(
+                session, symbol=args.symbol, timeframe=timeframe, config=config
+            )
+        except SymbolNotFoundError as exc:
+            print(f"ERRO: {exc}", file=sys.stderr)
+            return 1
+        except UnsupportedEntryTimeframeError as exc:
+            print(f"ERRO: {exc}", file=sys.stderr)
+            return 1
+    finally:
+        session.close()
+
+    decision = analysis.decision
+    if args.json:
+        _print_json(
+            {
+                "symbol": analysis.symbol,
+                "timeframe": timeframe.value,
+                "action": decision.action.value,
+                "probability_buy": decision.probability_buy,
+                "probability_sell": decision.probability_sell,
+                "probability_abstain": decision.probability_abstain,
+                "confidence": decision.confidence,
+                "min_confidence": decision.min_confidence,
+                "model_version": decision.model_version,
+                "feature_version": decision.feature_version,
+                "completeness": decision.completeness,
+                "context": analysis.context.state.value,
+                "vetoes": list(decision.vetoes),
+                "reasons": list(decision.reasons),
+            }
+        )
+        return 0
+
+    print(f"=== ApexFlow AI — {analysis.symbol} {timeframe.value} ===")
+    print(f"DECISAO: {decision.label.upper()}")
+    print(
+        f"  compra {decision.probability_buy * 100:.1f}% | "
+        f"venda {decision.probability_sell * 100:.1f}% | "
+        f"abstencao {decision.probability_abstain * 100:.1f}% "
+        f"(minimo para operar: {decision.min_confidence * 100:.0f}%)"
+    )
+    print(f"  modelo={decision.model_version} features={decision.feature_version} "
+          f"cobertura={decision.completeness * 100:.0f}%")
+    print(f"\nCONTEXTO: {analysis.context.label}")
+    for reason in analysis.context.reasons:
+        print(f"  - {reason}")
+
+    print("\nLEITURAS:")
+    print(f"  fluxo: {analysis.flow.tick_count} ticks", end="")
+    if analysis.flow.ticks_per_second is not None:
+        print(f", {analysis.flow.ticks_per_second:.2f}/s", end="")
+    if analysis.flow.efficiency is not None:
+        print(f", eficiencia {analysis.flow.efficiency:.2f}", end="")
+    print()
+    print(f"  spread: {analysis.spread.label}")
+    print(f"  volatilidade: {analysis.volatility.label}")
+    print(f"  momentum: {analysis.momentum.label}")
+    print(f"  liquidez: {analysis.liquidity.label}")
+    print(f"  multi-timeframe: alinhamento {analysis.mtf.alignment_score:+.2f} "
+          f"(cobertura {analysis.mtf.coverage * 100:.0f}%)")
+    print(f"  sessao: {analysis.session.headline}")
+    print(f"  volume: {analysis.volume.label}")
+
+    if decision.vetoes:
+        print("\nVETOS (nenhuma probabilidade sobrepoe um veto):")
+        for veto in decision.vetoes:
+            print(f"  ! {veto}")
+
+    print("\nJUSTIFICATIVA:")
+    for reason in decision.reasons:
+        print(f"  - {reason}")
+
+    if analysis.warnings:
+        print("\nAVISOS:")
+        for warning in analysis.warnings:
+            print(f"  * {warning}")
+    return 0
+
+
+def cmd_apexflow_history(args: argparse.Namespace) -> int:
+    session = get_session_factory()()
+    try:
+        symbol = SymbolRepository(session).get_by_name(args.symbol) if args.symbol else None
+        if args.symbol and symbol is None:
+            print(f"ERRO: simbolo '{args.symbol}' nao encontrado.", file=sys.stderr)
+            return 1
+        symbol_id = symbol.id if symbol is not None else None
+        repository = ApexFlowDecisionRepository(session)
+        performance = repository.performance(symbol_id=symbol_id)
+        records = repository.list_recent(symbol_id=symbol_id, limit=args.limit)
+    finally:
+        session.close()
+
+    def optional(value: float | None, fmt: str) -> str:
+        return format(value, fmt) if value is not None else "-"
+
+    print("=== Learning Engine (ApexFlow) ===")
+    print(
+        f"decisoes={performance.total_decisions} entradas={performance.entries} "
+        f"abstencoes={performance.abstentions} encerradas={performance.closed_trades}"
+    )
+    if performance.has_statistics:
+        print(
+            f"win rate={optional(performance.win_rate, '.1%')} "
+            f"profit factor={optional(performance.profit_factor, '.2f')} "
+            f"expectancia={optional(performance.expectancy, '.2f')} "
+            f"resultado={performance.net_pnl:+.2f}"
+        )
+    else:
+        print(
+            f"amostra insuficiente para estatisticas ({performance.closed_trades} "
+            "operacao(oes) encerrada(s)) — nenhum numero e estimado."
+        )
+
+    if not records:
+        print("\nnenhuma decisao registrada ainda.")
+        return 0
+
+    print("\n--- decisoes recentes ---")
+    for record in records:
+        result = (
+            f" resultado={float(record.result_net_pnl):+.2f}"
+            if record.result_net_pnl is not None
+            else ""
+        )
+        print(
+            f"{record.decided_at:%d/%m %H:%M} [{record.action}] "
+            f"confianca={float(record.confidence) * 100:.0f}% "
+            f"contexto={record.context_state}{result}"
+        )
+    return 0
+
+
 def cmd_monitor_model(args: argparse.Namespace) -> int:
     registry = ModelRegistry(get_settings().ml_models_dir)
     try:
@@ -2552,6 +2706,36 @@ def build_parser() -> argparse.ArgumentParser:
     analysis_run_parser.add_argument("--threshold", type=float, default=None)
     analysis_run_parser.add_argument("--json", action="store_true")
 
+    apexflow_parser = subparsers.add_parser(
+        "apexflow",
+        help=(
+            "Motor ApexFlow AI: fluxo de ticks, microestrutura e price action "
+            "(COMPRAR / VENDER / NAO OPERAR)"
+        ),
+    )
+    apexflow_subparsers = apexflow_parser.add_subparsers(
+        dest="apexflow_command", required=True
+    )
+    apexflow_analyze_parser = apexflow_subparsers.add_parser(
+        "analyze",
+        help="Explica a decisao do motor para um simbolo (consultivo, nao opera)",
+    )
+    apexflow_analyze_parser.add_argument("--symbol", required=True)
+    apexflow_analyze_parser.add_argument(
+        "--timeframe",
+        default="M5",
+        choices=["M1", "M5", "M15"],
+        help="Timeframe de ENTRADA. H1 fornece contexto e nunca entrada.",
+    )
+    apexflow_analyze_parser.add_argument("--min-confidence", type=float, default=None)
+    apexflow_analyze_parser.add_argument("--json", action="store_true")
+
+    apexflow_history_parser = apexflow_subparsers.add_parser(
+        "history", help="Desempenho registrado pelo Learning Engine"
+    )
+    apexflow_history_parser.add_argument("--symbol", default=None)
+    apexflow_history_parser.add_argument("--limit", type=int, default=20)
+
     autopilot_parser = subparsers.add_parser(
         "autopilot",
         help=(
@@ -2673,6 +2857,12 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_demo_run(args)
         if args.demo_command == "status":
             return cmd_demo_status(args)
+
+    if args.command == "apexflow":
+        if args.apexflow_command == "analyze":
+            return cmd_apexflow_analyze(args)
+        if args.apexflow_command == "history":
+            return cmd_apexflow_history(args)
 
     if args.command == "autopilot":
         if args.autopilot_command == "run":

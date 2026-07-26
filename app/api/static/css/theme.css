@@ -2365,3 +2365,66 @@ details summary {
         grid-template-columns: 1fr;
     }
 }
+
+/* --- ApexFlow AI ----------------------------------------------------------- */
+
+.tp-apex-probabilities {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.85rem;
+    padding-top: 1.1rem;
+    margin-top: 1.1rem;
+    border-top: 1px solid var(--tp-border);
+}
+
+.tp-apex-prob {
+    display: grid;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.tp-apex-prob span {
+    color: var(--tp-text-muted);
+    font-size: 0.66rem;
+    font-weight: 650;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.tp-apex-prob strong {
+    font-size: 1.4rem;
+    letter-spacing: -0.03em;
+}
+
+.tp-apex-bar {
+    height: 0.35rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.tp-apex-bar span {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.4s ease;
+}
+
+.tp-apex-prob.is-buy strong { color: #68e89a; }
+.tp-apex-prob.is-buy .tp-apex-bar span { background: #68e89a; }
+.tp-apex-prob.is-sell strong { color: #fb7185; }
+.tp-apex-prob.is-sell .tp-apex-bar span { background: #fb7185; }
+.tp-apex-prob.is-abstain strong { color: var(--tp-text-muted); }
+.tp-apex-prob.is-abstain .tp-apex-bar span { background: rgba(148, 163, 184, 0.7); }
+
+.tp-apex-threshold {
+    margin: 1rem 0 0;
+    color: var(--tp-text-muted);
+    font-size: 0.76rem;
+}
+
+@media (max-width: 767.98px) {
+    .tp-apex-probabilities {
+        grid-template-columns: 1fr;
+    }
+}

@@ -32,13 +32,17 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from app.apexflow.config import load_apexflow_config
+from app.apexflow.engine import analyze as apexflow_analyze
+from app.apexflow.journal import record_decision
+from app.apexflow.strategy import ApexFlowStrategy
 from app.core.config import Settings, get_settings
 from app.core.enums import SystemMode
 from app.database.repositories.candle_repository import CandleRepository
 from app.database.repositories.live_trade_repository import LiveTradeRepository
 from app.database.repositories.symbol_repository import SymbolRepository
 from app.database.repositories.system_setting_repository import get_current_mode
-from app.execution.automation_settings import TradingAutomationConfig
+from app.execution.automation_settings import ENGINE_APEXFLOW, TradingAutomationConfig
 from app.execution.autopilot_status import (
     ActivityLevel,
     AutopilotPhase,
@@ -87,6 +91,10 @@ CONTEXT_PROFILE_BARS = 1_500
 hora do dia sem carregar a serie inteira a cada ciclo."""
 
 EXECUTION_TIMEFRAMES: tuple[str, ...] = ("M5", "M15", "M30")
+
+APEXFLOW_ENTRY_TIMEFRAMES: tuple[str, ...] = ("M5", "M15", "M1")
+"""Timeframes de entrada aceitos pelo ApexFlow, em ordem de preferencia.
+H1 esta fora por arquitetura (`app.apexflow.mtf.ENTRY_TIMEFRAMES`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +197,205 @@ def _blocked(
     )
 
 
+def _run_apexflow(
+    session: Session,
+    client: MT5ClientProtocol,
+    *,
+    config: TradingAutomationConfig,
+    account: AccountSnapshot,
+    publisher: AutopilotStatusPublisher,
+    symbol_row,
+    broker_symbol: str,
+    spec,
+    session_state,
+    volume,
+    market_fields: dict,
+    available_timeframes: tuple[str, ...],
+    settings: Settings,
+    now: datetime,
+) -> AutopilotCycleResult:
+    """Ciclo com o ApexFlow AI no comando da decisao.
+
+    O motor decide COMPRAR/VENDER/NAO OPERAR; toda decisao (inclusive as de
+    nao operar, que sao a maioria) e registrada no Learning Engine antes de
+    qualquer envio de ordem. Os portoes de risco e a execucao continuam
+    sendo exatamente os mesmos do caminho por playbook.
+    """
+    apexflow_config = load_apexflow_config(session)
+    timeframe = _apexflow_timeframe(config.timeframe, available_timeframes)
+    bar_seconds = TIMEFRAME_SECONDS[timeframe]
+
+    publisher.publish(
+        AutopilotPhase.ANALYZING,
+        f"ApexFlow AI lendo o fluxo de {broker_symbol} em {timeframe.value}.",
+        enabled=True,
+        timeframe=timeframe.value,
+        playbook_kind="APEXFLOW",
+        playbook_label="ApexFlow AI",
+        playbook_description=(
+            "Motor de fluxo de ticks, microestrutura e price action: decide "
+            "comprar, vender ou nao operar."
+        ),
+        playbook_icon="bi-cpu",
+        analysis_threshold=apexflow_config.min_confidence * 100,
+        **market_fields,
+    )
+
+    analysis = apexflow_analyze(
+        session,
+        symbol=broker_symbol,
+        timeframe=timeframe,
+        config=apexflow_config,
+        point=float(symbol_row.point),
+        now=now,
+    )
+    decision = analysis.decision
+
+    record_decision(
+        session,
+        decision,
+        analysis.vector,
+        symbol_id=symbol_row.id,
+        timeframe=timeframe.value,
+        context=analysis.context,
+        session_state=session_state,
+        volume=volume,
+    )
+
+    apexflow_fields = {
+        "timeframe": timeframe.value,
+        "playbook_kind": "APEXFLOW",
+        "playbook_label": f"ApexFlow AI — {decision.label}",
+        "playbook_description": analysis.context.label,
+        "playbook_icon": "bi-cpu",
+        "analysis_score": round(decision.confidence * 100, 1),
+        "analysis_threshold": round(apexflow_config.min_confidence * 100, 1),
+        "analysis_recommendation": decision.action.value,
+        "fit_score": round(analysis.vector.completeness * 100, 1),
+        "risk_factor": 1.0,
+        "reasons": tuple(decision.reasons),
+        "blockers": tuple(decision.vetoes),
+    }
+
+    if not decision.is_entry:
+        headline = (
+            f"ApexFlow AI: NAO OPERAR ({decision.probability_abstain * 100:.0f}% de "
+            f"abstencao). {decision.vetoes[0] if decision.vetoes else ''}"
+        ).strip()
+        publisher.publish(
+            AutopilotPhase.STANDING_ASIDE,
+            headline,
+            detail=(
+                f"Compra {decision.probability_buy * 100:.1f}% / venda "
+                f"{decision.probability_sell * 100:.1f}% — minimo para operar "
+                f"{apexflow_config.min_confidence * 100:.0f}%."
+            ),
+            enabled=True,
+            **market_fields,
+            **apexflow_fields,
+        )
+        return AutopilotCycleResult(
+            ran=True,
+            phase=AutopilotPhase.STANDING_ASIDE,
+            message=headline,
+        )
+
+    execution_candles = CandleRepository(session).get_recent(
+        symbol_row.id, timeframe.value, required_lookback_bars() + 5
+    )
+    if len(execution_candles) < 2:
+        return _blocked(
+            publisher,
+            f"Aguardando candles de {broker_symbol}/{timeframe.value}.",
+            blocking_error=None,
+            **market_fields,
+            **apexflow_fields,
+        )
+
+    strategy = ApexFlowStrategy(
+        analysis,
+        expected_open_time=execution_candles[-1].open_time,
+        point=float(symbol_row.point),
+        config=apexflow_config,
+    )
+    limits = RiskLimits(
+        risk_per_trade_pct=config.risk_per_trade_pct,
+        max_daily_loss_pct=config.max_daily_loss_pct,
+        max_consecutive_losses=config.max_consecutive_losses,
+        max_simultaneous_positions=config.max_simultaneous_positions,
+        max_trades_per_day=config.max_trades_per_day,
+        min_seconds_between_trades=config.min_seconds_between_trades,
+        max_spread_points=min(config.max_spread_points, apexflow_config.max_spread_points),
+        max_feed_delay_seconds=max(
+            float(settings.quality_max_feed_delay_seconds), float(bar_seconds * 2)
+        ),
+    )
+    engine = DemoExecutionEngine(
+        session,
+        client,
+        strategy,
+        symbol=broker_symbol,
+        symbol_id=symbol_row.id,
+        timeframe=timeframe.value,
+        point=float(symbol_row.point),
+        account=account,
+        symbol_spec=spec,
+        risk_limits=limits,
+        magic=0,
+        model_version=decision.model_version,
+        clock=lambda: now,
+        scope_across_timeframes=True,
+    )
+    result = engine.step(execution_candles)
+
+    for event in result.events:
+        message, level = _describe_event(event)
+        publisher.note(message, level=level)
+
+    trades_today, pnl_today = _daily_counters(session, symbol_row.id)
+    open_position = _open_position_summary(session, symbol_row.id)
+    opened = any(isinstance(event, PositionOpened) for event in result.events)
+    phase = AutopilotPhase.POSITION_OPEN if (opened or open_position) else (
+        AutopilotPhase.WAITING_TRIGGER
+    )
+    headline = (
+        f"ApexFlow AI {decision.label} com {decision.confidence * 100:.1f}% de "
+        f"confianca em {broker_symbol}."
+    )
+
+    publisher.publish(
+        phase,
+        headline,
+        enabled=True,
+        trades_today=trades_today,
+        pnl_today=pnl_today,
+        open_position=open_position,
+        last_cycle_at=now.isoformat(),
+        cycles=publisher.load().cycles + 1,
+        last_error="",
+        **market_fields,
+        **apexflow_fields,
+    )
+    return AutopilotCycleResult(
+        ran=True, phase=phase, message=headline, events=tuple(result.events)
+    )
+
+
+def _apexflow_timeframe(
+    configured: str, available: tuple[str, ...]
+) -> Timeframe:
+    """Timeframe de EXECUCAO do ApexFlow.
+
+    O motor recusa timeframes de contexto por arquitetura (`H1` fornece
+    direcao macro, nunca entrada), entao um `configured` fora da lista de
+    entrada cai para o padrao em vez de derrubar o ciclo.
+    """
+    candidates = [
+        code for code in (configured, *available) if code in APEXFLOW_ENTRY_TIMEFRAMES
+    ]
+    return Timeframe(candidates[0] if candidates else "M5")
+
+
 def run_autopilot_cycle(
     session: Session,
     client: MT5ClientProtocol,
@@ -287,6 +494,24 @@ def run_autopilot_cycle(
             symbol=config.symbol,
             broker_symbol=broker_symbol,
             **market_fields,
+        )
+
+    if config.engine == ENGINE_APEXFLOW:
+        return _run_apexflow(
+            session,
+            client,
+            config=config,
+            account=account,
+            publisher=publisher,
+            symbol_row=symbol,
+            broker_symbol=broker_symbol,
+            spec=spec,
+            session_state=session_state,
+            volume=volume,
+            market_fields=market_fields,
+            available_timeframes=available_timeframes,
+            settings=resolved_settings,
+            now=resolved_now,
         )
 
     publisher.publish(

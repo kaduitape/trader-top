@@ -22,12 +22,16 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+from app.apexflow.config import load_apexflow_config, save_apexflow_config
 from app.api.dependencies.auth import get_current_user_for_web
 from app.api.templates_engine import templates
 from app.core.config import get_settings
 from app.core.enums import SystemMode
 from app.core.system_mode import SystemModeError, validate_transition
 from app.database.models.user import User
+from app.database.repositories.apexflow_decision_repository import (
+    ApexFlowDecisionRepository,
+)
 from app.database.repositories.audit_log_repository import AuditLogRepository
 from app.database.repositories.candle_repository import CandleRepository
 from app.database.repositories.drift_event_repository import DriftEventRepository
@@ -42,6 +46,8 @@ from app.database.repositories.system_setting_repository import (
 from app.database.repositories.tick_repository import TickRepository
 from app.database.session import get_db
 from app.execution.automation_settings import (
+    ENGINE_APEXFLOW,
+    ENGINE_PLAYBOOK,
     TradingAutomationConfig,
     load_trading_automation_config,
     save_trading_automation_config,
@@ -791,6 +797,182 @@ def _autopilot_json(payload: dict) -> dict:
         "last_error": status.last_error,
         "activities": summarize_activities(status.activities),
     }
+
+
+def _apexflow_payload(db: Session) -> dict:
+    """Estado do ApexFlow para a pagina e para o polling.
+
+    Metricas de desempenho vem do historico REAL de decisoes
+    (`apexflow_decisions`) e ficam `None` ate haver amostra suficiente — o
+    painel mostra "—", nunca um profit factor inventado com dois trades.
+    """
+    config = load_apexflow_config(db)
+    automation = load_trading_automation_config(db)
+    symbol_row = SymbolRepository(db).get_by_name(automation.symbol)
+    symbol_id = symbol_row.id if symbol_row is not None else None
+
+    repository = ApexFlowDecisionRepository(db)
+    performance = repository.performance(symbol_id=symbol_id)
+    recent = repository.list_recent(symbol_id=symbol_id, limit=15)
+    latest = recent[0] if recent else None
+
+    return {
+        "apexflow_config": config,
+        "automation": automation,
+        "performance": performance,
+        "recent_decisions": recent,
+        "latest": latest,
+        "engine_active": automation.enabled and automation.engine == ENGINE_APEXFLOW,
+    }
+
+
+def _apexflow_json(payload: dict) -> dict:
+    latest = payload["latest"]
+    performance = payload["performance"]
+    config = payload["apexflow_config"]
+
+    def optional(value) -> float | None:
+        return None if value is None else float(value)
+
+    return {
+        "engine_active": payload["engine_active"],
+        "min_confidence": config.min_confidence,
+        "model_version": latest.model_version if latest else "",
+        "decided_at": latest.decided_at.isoformat() if latest else None,
+        "action": latest.action if latest else "",
+        "probability_buy": optional(latest.probability_buy) if latest else None,
+        "probability_sell": optional(latest.probability_sell) if latest else None,
+        "probability_abstain": optional(latest.probability_abstain) if latest else None,
+        "confidence": optional(latest.confidence) if latest else None,
+        "context_state": latest.context_state if latest else "",
+        "session_rating": latest.session_rating if latest else "",
+        "volume_level": latest.volume_level if latest else "",
+        "spread_points": optional(latest.spread_points) if latest else None,
+        "atr_points": optional(latest.atr_points) if latest else None,
+        "ticks_per_second": optional(latest.ticks_per_second) if latest else None,
+        "mtf_alignment": optional(latest.mtf_alignment) if latest else None,
+        "completeness": optional(latest.completeness) if latest else None,
+        "total_decisions": performance.total_decisions,
+        "entries": performance.entries,
+        "abstentions": performance.abstentions,
+        "abstention_rate": performance.abstention_rate,
+        "closed_trades": performance.closed_trades,
+        "has_statistics": performance.has_statistics,
+        "win_rate": performance.win_rate,
+        "profit_factor": performance.profit_factor,
+        "expectancy": performance.expectancy,
+        "net_pnl": performance.net_pnl,
+        "decisions": [
+            {
+                "decided_at": record.decided_at.isoformat(),
+                "action": record.action,
+                "confidence": float(record.confidence),
+                "context_state": record.context_state,
+                "net_pnl": (
+                    None if record.result_net_pnl is None else float(record.result_net_pnl)
+                ),
+            }
+            for record in payload["recent_decisions"]
+        ],
+    }
+
+
+@router.get("/dashboard/apexflow", response_class=HTMLResponse)
+def dashboard_apexflow(
+    request: Request,
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    saved: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    payload = _apexflow_payload(db)
+    return templates.TemplateResponse(
+        request,
+        "dashboard/apexflow.html",
+        {"user": user, **payload, "saved": saved, "error": error},
+    )
+
+
+@router.get("/dashboard/apexflow/status", response_class=JSONResponse)
+def dashboard_apexflow_status(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    return JSONResponse(_apexflow_json(_apexflow_payload(db)))
+
+
+@router.post("/dashboard/apexflow")
+def dashboard_apexflow_save(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    min_confidence: float = Form(...),
+    min_atr_points: float = Form(...),
+    max_spread_points: float = Form(...),
+    risk_reward_min: float = Form(...),
+    daily_profit_target_pct: float = Form(...),
+    max_drawdown_pct: float = Form(...),
+    tick_window_seconds: int = Form(...),
+    use_engine: str = Form(""),
+) -> RedirectResponse:
+    """Salva os parametros do motor e escolhe qual cerebro decide.
+
+    NAO liga a automacao: ligar continua exigindo os portoes de
+    `/dashboard/autopilot` (confirmacao digitada, modo DEMO, conta demo).
+    Trocar de motor com o robo desligado nunca envia ordem.
+    """
+    validations = (
+        (0.50 <= min_confidence <= 0.99, "a confianca minima deve ficar entre 50% e 99%."),
+        (1.0 <= min_atr_points <= 10_000.0, "o ATR minimo deve ficar entre 1 e 10000 pontos."),
+        (1.0 <= max_spread_points <= 500.0, "o spread maximo deve ficar entre 1 e 500 pontos."),
+        (1.0 <= risk_reward_min <= 10.0, "o risco/retorno minimo deve ficar entre 1 e 10."),
+        (
+            0.5 <= daily_profit_target_pct <= 20.0,
+            "a meta diaria de lucro deve ficar entre 0,5% e 20%.",
+        ),
+        (1.0 <= max_drawdown_pct <= 30.0, "o drawdown maximo deve ficar entre 1% e 30%."),
+        (
+            10 <= tick_window_seconds <= 3_600,
+            "a janela de ticks deve ficar entre 10 e 3600 segundos.",
+        ),
+    )
+    for valid, message in validations:
+        if not valid:
+            return RedirectResponse(
+                url=f"/dashboard/apexflow?error={quote(message)}", status_code=303
+            )
+
+    save_apexflow_config(
+        db,
+        replace(
+            load_apexflow_config(db),
+            enabled=bool(use_engine),
+            min_confidence=min_confidence,
+            min_atr_points=min_atr_points,
+            max_spread_points=max_spread_points,
+            risk_reward_min=risk_reward_min,
+            daily_profit_target_pct=daily_profit_target_pct,
+            max_drawdown_pct=max_drawdown_pct,
+            tick_window_seconds=tick_window_seconds,
+        ),
+    )
+    save_trading_automation_config(
+        db,
+        replace(
+            load_trading_automation_config(db),
+            engine=ENGINE_APEXFLOW if use_engine else ENGINE_PLAYBOOK,
+        ),
+    )
+    AuditLogRepository(db).record(
+        action="apexflow_config_change",
+        entity="apexflow",
+        detail=(
+            f"motor={'apexflow' if use_engine else 'playbook'} "
+            f"confianca_minima={min_confidence:.2f}"
+        ),
+        user_id=user.id,
+    )
+    db.commit()
+    return RedirectResponse(url="/dashboard/apexflow?saved=1", status_code=303)
 
 
 @router.get("/dashboard/autopilot", response_class=HTMLResponse)

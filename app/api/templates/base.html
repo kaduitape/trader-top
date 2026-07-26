@@ -21,6 +21,9 @@
     <a class="tp-nav-link {% if request.url.path.startswith('/dashboard/autopilot') %}active{% endif %}" href="/dashboard/autopilot">
         <i class="bi bi-robot"></i><span>Piloto automático</span><span class="tp-nav-chip">LIVE</span>
     </a>
+    <a class="tp-nav-link {% if request.url.path.startswith('/dashboard/apexflow') %}active{% endif %}" href="/dashboard/apexflow">
+        <i class="bi bi-cpu-fill"></i><span>ApexFlow AI</span><span class="tp-nav-chip">IA</span>
+    </a>
     <a class="tp-nav-link {% if request.url.path == '/dashboard/paper-trades' %}active{% endif %}" href="/dashboard/paper-trades">
         <i class="bi bi-journal-check"></i><span>Paper trading</span>
     </a>

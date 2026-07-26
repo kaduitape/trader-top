@@ -1,0 +1,355 @@
+{% extends "base.html" %}
+{% block title %}ApexFlow AI — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Motor de decisão</span>
+        <h1 class="tp-page-title">ApexFlow AI</h1>
+        <p class="tp-page-description">
+            Fluxo de ticks, microestrutura, price action e contexto multi-timeframe.
+            Três respostas possíveis: comprar, vender ou não operar — e a abstenção é o padrão.
+        </p>
+    </div>
+    <a href="/dashboard/autopilot" class="btn btn-outline-light">
+        <i class="bi bi-robot me-2"></i>Piloto automático
+    </a>
+</header>
+
+{% if error %}
+<div class="alert alert-danger"><i class="bi bi-exclamation-octagon me-2"></i>{{ error }}</div>
+{% endif %}
+{% if saved %}
+<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i>Configuração salva e auditada.</div>
+{% endif %}
+
+<section class="tp-pilot-hero {% if engine_active %}is-working{% endif %}">
+    <div class="tp-pilot-headline">
+        <span class="tp-pilot-pulse" aria-hidden="true"></span>
+        <div class="tp-pilot-copy">
+            <span class="tp-eyebrow"><i class="bi bi-cpu me-1"></i>Estado do motor</span>
+            <strong id="apexAction">
+                {%- if latest %}{{ latest.action }}{% else %}Aguardando o primeiro ciclo{% endif -%}
+            </strong>
+            <span id="apexContext">
+                {%- if latest %}Contexto: {{ latest.context_state }} · modelo {{ latest.model_version }}
+                {%- else %}Ligue o motor no piloto automático para começar a decidir.{% endif -%}
+            </span>
+        </div>
+        <div class="tp-pilot-symbol">
+            <span>Ativo</span>
+            <strong>{{ automation.symbol }}</strong>
+        </div>
+    </div>
+
+    <div class="tp-apex-probabilities" id="apexProbabilities">
+        <div class="tp-apex-prob is-buy">
+            <span>Comprar</span>
+            <strong id="apexProbBuy">
+                {%- if latest %}{{ "%.1f"|format(latest.probability_buy * 100) }}%{% else %}—{% endif -%}
+            </strong>
+            <div class="tp-apex-bar"><span id="apexBarBuy"
+                style="width: {% if latest %}{{ (latest.probability_buy * 100)|round(1) }}{% else %}0{% endif %}%"></span></div>
+        </div>
+        <div class="tp-apex-prob is-sell">
+            <span>Vender</span>
+            <strong id="apexProbSell">
+                {%- if latest %}{{ "%.1f"|format(latest.probability_sell * 100) }}%{% else %}—{% endif -%}
+            </strong>
+            <div class="tp-apex-bar"><span id="apexBarSell"
+                style="width: {% if latest %}{{ (latest.probability_sell * 100)|round(1) }}{% else %}0{% endif %}%"></span></div>
+        </div>
+        <div class="tp-apex-prob is-abstain">
+            <span>Não operar</span>
+            <strong id="apexProbAbstain">
+                {%- if latest %}{{ "%.1f"|format(latest.probability_abstain * 100) }}%{% else %}—{% endif -%}
+            </strong>
+            <div class="tp-apex-bar"><span id="apexBarAbstain"
+                style="width: {% if latest %}{{ (latest.probability_abstain * 100)|round(1) }}{% else %}0{% endif %}%"></span></div>
+        </div>
+    </div>
+    <p class="tp-apex-threshold">
+        Confiança mínima para executar:
+        <strong>{{ "%.0f"|format(apexflow_config.min_confidence * 100) }}%</strong>.
+        Abaixo disso a resposta é sempre <em>não operar</em>.
+    </p>
+</section>
+
+<div class="tp-stat-grid">
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-activity"></i></span>
+        <span class="tp-stat-copy"><span>Ticks/s</span><strong id="apexTickRate">
+            {%- if latest and latest.ticks_per_second is not none %}{{ "%.2f"|format(latest.ticks_per_second) }}{% else %}—{% endif -%}
+        </strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-arrows-expand"></i></span>
+        <span class="tp-stat-copy"><span>ATR (pontos)</span><strong id="apexAtr">
+            {%- if latest and latest.atr_points is not none %}{{ "%.1f"|format(latest.atr_points) }}{% else %}—{% endif -%}
+        </strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-distribute-horizontal"></i></span>
+        <span class="tp-stat-copy"><span>Spread (pontos)</span><strong id="apexSpread">
+            {%- if latest and latest.spread_points is not none %}{{ "%.1f"|format(latest.spread_points) }}{% else %}—{% endif -%}
+        </strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-layers"></i></span>
+        <span class="tp-stat-copy"><span>Alinhamento MTF</span><strong id="apexMtf">
+            {%- if latest and latest.mtf_alignment is not none %}{{ "%+.2f"|format(latest.mtf_alignment) }}{% else %}—{% endif -%}
+        </strong></span>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-xl-7">
+        <section class="card mb-4">
+            <div class="card-header"><i class="bi bi-clipboard-data me-2"></i>Desempenho registrado</div>
+            <div class="card-body p-4">
+                {% if not performance.has_statistics %}
+                <div class="tp-context-note mb-4">
+                    <i class="bi bi-info-circle"></i>
+                    <div>
+                        <strong>Amostra insuficiente para estatísticas.</strong>
+                        {{ performance.closed_trades }} operação(ões) encerrada(s). Win rate,
+                        profit factor e expectância só aparecem com amostra suficiente — um
+                        número calculado sobre duas operações seria mais enganoso que a ausência dele.
+                    </div>
+                </div>
+                {% endif %}
+                <div class="tp-pilot-meta" style="margin-top:0; padding-top:0; border-top:0">
+                    <div><span>Decisões</span><strong id="apexTotal">{{ performance.total_decisions }}</strong></div>
+                    <div><span>Entradas</span><strong id="apexEntries">{{ performance.entries }}</strong></div>
+                    <div><span>Abstenções</span><strong id="apexAbstentions">{{ performance.abstentions }}</strong></div>
+                    <div><span>Win rate</span><strong id="apexWinRate">
+                        {%- if performance.win_rate is not none %}{{ "%.0f"|format(performance.win_rate * 100) }}%{% else %}—{% endif -%}
+                    </strong></div>
+                    <div><span>Profit factor</span><strong id="apexProfitFactor">
+                        {%- if performance.profit_factor is not none %}{{ "%.2f"|format(performance.profit_factor) }}{% else %}—{% endif -%}
+                    </strong></div>
+                    <div><span>Expectância</span><strong id="apexExpectancy">
+                        {%- if performance.expectancy is not none %}{{ "%.2f"|format(performance.expectancy) }}{% else %}—{% endif -%}
+                    </strong></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="card-header"><i class="bi bi-journal-text me-2"></i>Últimas decisões</div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Horário</th><th>Decisão</th><th>Confiança</th>
+                                <th>Contexto</th><th class="text-end">Resultado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="apexDecisions">
+                            {% for record in recent_decisions %}
+                            <tr>
+                                <td>{{ record.decided_at.strftime("%d/%m %H:%M") }}</td>
+                                <td>
+                                    <span class="tp-direction {% if record.action == 'BUY' %}is-long{% elif record.action == 'SELL' %}is-short{% endif %}">
+                                        {{ record.action }}
+                                    </span>
+                                </td>
+                                <td>{{ "%.0f"|format(record.confidence * 100) }}%</td>
+                                <td>{{ record.context_state }}</td>
+                                <td class="text-end">
+                                    {%- if record.result_net_pnl is not none %}{{ "%+.2f"|format(record.result_net_pnl) }}{% else %}—{% endif -%}
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="5" class="text-muted">Nenhuma decisão registrada ainda.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-xl-5">
+        <form method="post" action="/dashboard/apexflow">
+            <section class="card tp-sticky-settings">
+                <div class="card-header"><i class="bi bi-sliders me-2"></i>Parâmetros do motor</div>
+                <div class="card-body p-4">
+                    <div class="form-check form-switch tp-switch-row mb-4">
+                        <input class="form-check-input" type="checkbox" id="use_engine" name="use_engine" value="1"
+                               {% if automation.engine == "apexflow" %}checked{% endif %}>
+                        <label class="form-check-label" for="use_engine">
+                            <strong>Usar o ApexFlow AI para decidir</strong>
+                            <span>Substitui o seletor de operacional. Ligar o robô continua sendo feito no piloto automático.</span>
+                        </label>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <label class="form-label" for="min_confidence">Confiança mínima</label>
+                            <div class="input-group">
+                                <input class="form-control" type="number" id="min_confidence" name="min_confidence"
+                                       min="0.5" max="0.99" step="0.01"
+                                       value="{{ apexflow_config.min_confidence }}" required>
+                                <span class="input-group-text">0–1</span>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" for="min_atr_points">ATR mínimo</label>
+                            <div class="input-group">
+                                <input class="form-control" type="number" id="min_atr_points" name="min_atr_points"
+                                       min="1" max="10000" step="0.5"
+                                       value="{{ apexflow_config.min_atr_points }}" required>
+                                <span class="input-group-text">pts</span>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" for="max_spread_points">Spread máximo</label>
+                            <div class="input-group">
+                                <input class="form-control" type="number" id="max_spread_points" name="max_spread_points"
+                                       min="1" max="500" step="0.1"
+                                       value="{{ apexflow_config.max_spread_points }}" required>
+                                <span class="input-group-text">pts</span>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" for="risk_reward_min">Risco/retorno mínimo</label>
+                            <input class="form-control" type="number" id="risk_reward_min" name="risk_reward_min"
+                                   min="1" max="10" step="0.1"
+                                   value="{{ apexflow_config.risk_reward_min }}" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" for="daily_profit_target_pct">Meta diária</label>
+                            <div class="input-group">
+                                <input class="form-control" type="number" id="daily_profit_target_pct"
+                                       name="daily_profit_target_pct" min="0.5" max="20" step="0.1"
+                                       value="{{ apexflow_config.daily_profit_target_pct }}" required>
+                                <span class="input-group-text">%</span>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label" for="max_drawdown_pct">Drawdown máximo</label>
+                            <div class="input-group">
+                                <input class="form-control" type="number" id="max_drawdown_pct" name="max_drawdown_pct"
+                                       min="1" max="30" step="0.5"
+                                       value="{{ apexflow_config.max_drawdown_pct }}" required>
+                                <span class="input-group-text">%</span>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="tick_window_seconds">Janela de fluxo de ticks</label>
+                            <div class="input-group">
+                                <input class="form-control" type="number" id="tick_window_seconds"
+                                       name="tick_window_seconds" min="10" max="3600"
+                                       value="{{ apexflow_config.tick_window_seconds }}" required>
+                                <span class="input-group-text">segundos</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tp-context-note my-4">
+                        <i class="bi bi-shield-lock"></i>
+                        <div>
+                            <strong>Vetos vêm antes da probabilidade.</strong>
+                            Spread fora do limite, volatilidade insuficiente, caça de liquidez em
+                            andamento ou sensores incompletos bloqueiam a entrada mesmo com 99%
+                            de confiança. Nunca há martingale, grid ou aumento de lote.
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary w-100" type="submit">
+                        <i class="bi bi-save me-2"></i>Salvar parâmetros
+                    </button>
+                </div>
+            </section>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const POLL_MS = 5000;
+    const text = (id, value) => {
+        const node = document.getElementById(id);
+        if (node) { node.textContent = value; }
+    };
+    const percent = (value) => (value === null || value === undefined
+        ? "—" : (value * 100).toFixed(1) + "%");
+    const number = (value, digits) => (value === null || value === undefined
+        ? "—" : Number(value).toFixed(digits));
+
+    function bar(id, value) {
+        const node = document.getElementById(id);
+        if (node) { node.style.width = ((value || 0) * 100).toFixed(1) + "%"; }
+    }
+
+    function apply(data) {
+        text("apexAction", data.action || "Aguardando o primeiro ciclo");
+        text("apexContext", data.context_state
+            ? "Contexto: " + data.context_state + " · modelo " + data.model_version
+            : "Ligue o motor no piloto automático para começar a decidir.");
+        text("apexProbBuy", percent(data.probability_buy));
+        text("apexProbSell", percent(data.probability_sell));
+        text("apexProbAbstain", percent(data.probability_abstain));
+        bar("apexBarBuy", data.probability_buy);
+        bar("apexBarSell", data.probability_sell);
+        bar("apexBarAbstain", data.probability_abstain);
+        text("apexTickRate", number(data.ticks_per_second, 2));
+        text("apexAtr", number(data.atr_points, 1));
+        text("apexSpread", number(data.spread_points, 1));
+        text("apexMtf", data.mtf_alignment === null || data.mtf_alignment === undefined
+            ? "—" : (data.mtf_alignment >= 0 ? "+" : "") + Number(data.mtf_alignment).toFixed(2));
+        text("apexTotal", data.total_decisions);
+        text("apexEntries", data.entries);
+        text("apexAbstentions", data.abstentions);
+        text("apexWinRate", data.win_rate === null ? "—" : Math.round(data.win_rate * 100) + "%");
+        text("apexProfitFactor", number(data.profit_factor, 2));
+        text("apexExpectancy", number(data.expectancy, 2));
+
+        const body = document.getElementById("apexDecisions");
+        if (body && data.decisions && data.decisions.length) {
+            body.replaceChildren(...data.decisions.map((record) => {
+                const row = document.createElement("tr");
+                const cells = [
+                    String(record.decided_at || "").slice(5, 16).replace("T", " "),
+                    record.action,
+                    Math.round((record.confidence || 0) * 100) + "%",
+                    record.context_state,
+                    record.net_pnl === null ? "—" : Number(record.net_pnl).toFixed(2),
+                ];
+                cells.forEach((value, index) => {
+                    const cell = document.createElement("td");
+                    if (index === 4) { cell.className = "text-end"; }
+                    if (index === 1) {
+                        const span = document.createElement("span");
+                        span.className = "tp-direction" +
+                            (value === "BUY" ? " is-long" : value === "SELL" ? " is-short" : "");
+                        span.textContent = value;
+                        cell.append(span);
+                    } else {
+                        cell.textContent = value;
+                    }
+                    row.append(cell);
+                });
+                return row;
+            }));
+        }
+    }
+
+    async function poll() {
+        try {
+            const response = await fetch("/dashboard/apexflow/status",
+                { headers: { "Accept": "application/json" } });
+            if (response.ok) { apply(await response.json()); }
+        } catch (error) {
+            // Falha de rede momentanea nao limpa a tela; o proximo ciclo tenta de novo.
+        }
+    }
+
+    setInterval(poll, POLL_MS);
+    poll();
+})();
+</script>
+{% endblock %}

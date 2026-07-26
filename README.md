@@ -429,6 +429,61 @@ compulsiva". Quem fecha a posição é o broker (stop-loss/take-profit
 anexados ao próprio pedido) — este processo só reconcilia o que já
 aconteceu, nunca envia uma ordem de fechamento por conta própria.
 
+## Piloto automático — escolha a moeda, o robô decide o resto
+
+Escolha um par em `/dashboard/autopilot`, ligue, e o robô passa a decidir
+sozinho **como** operar: lê a sessão de negociação daquele par
+(`app/market/sessions.py`), compara o volume atual com a mediana histórica
+da **mesma hora** (`app/market/volume_profile.py`) e elege um dos
+operacionais já validados — tendência com pullback, rompimento, retorno à
+média, momentum ou cruzamento — junto do timeframe de execução, do score
+mínimo e do multiplicador de risco (`app/execution/playbook.py`).
+
+Enquanto trabalha, um painel ao vivo mostra em que etapa ele está — lendo o
+mercado, escolhendo o operacional, analisando, aguardando o gatilho,
+enviando a ordem, acompanhando a posição — com o motivo de cada decisão e um
+feed das últimas atividades. Se o worker parar de publicar, a tela mostra
+"desatualizado" em vez de fingir que o robô continua trabalhando.
+
+Duas invariantes de segurança, impostas por código e cobertas por teste: o
+**score mínimo nunca fica abaixo** do configurado (horário ruim só torna o
+robô mais exigente) e o **multiplicador de risco nunca passa de 1.0**.
+
+```powershell
+python -m app.cli autopilot status
+python -m app.cli autopilot run --iterations 20 --poll-seconds 15
+```
+
+Ver `docs/autopilot.md`.
+
+## ApexFlow AI — motor de decisão por fluxo de ticks
+
+Alternativa ao seletor de operacional, ligada em `/dashboard/apexflow`. Em
+vez de reagir a um cruzamento de indicador, interpreta o **comportamento**
+do mercado: fluxo de ticks (taxa, aceleração, eficiência do trajeto),
+microestrutura, price action, liquidez institucional e contexto
+multi-timeframe com papéis fixos (H1 macro → M15 contexto → M5 confirmação
+→ M1 timing → tick execução; **H1 nunca gera entrada**).
+
+A saída tem exatamente três possibilidades — **COMPRAR**, **VENDER** ou
+**NÃO OPERAR** — e a abstenção é o padrão. Vetos duros (spread, volatilidade
+insuficiente, caça de liquidez, sensores incompletos) são avaliados **antes**
+da probabilidade e não podem ser sobrepostos por ela, nem por um modelo com
+99% de confiança.
+
+O cérebro padrão é um scorecard determinístico e totalmente explicável;
+qualquer modelo treinado e aprovado pode substituí-lo consumindo o mesmo
+feature vector versionado. Toda decisão — inclusive as de não operar, que são
+a maioria — vai para o Learning Engine (`apexflow_decisions`) com o vetor
+completo, para reavaliação futura.
+
+```powershell
+python -m app.cli apexflow analyze --symbol XAUUSD --timeframe M5
+python -m app.cli apexflow history --symbol XAUUSD
+```
+
+Ver `docs/apexflow.md`.
+
 ## Executando a API
 
 ```powershell
@@ -557,9 +612,12 @@ de modelos, walk-forward e critérios formais de aprovação),
 (motor de risco com poder de veto + saúde do feed, Fases 11/13),
 `app/execution` (máquina de estados de ordem e motor de execução em
 conta demo, Fase 11), `app/monitoring` (detecção de drift + checagens de
-prontidão operacional, Fases 13/15) e `app/cli.py` (comandos de
-diagnóstico/coleta/análise/backtest/ML/paper trading/demo/monitor/
-preflight). Os demais diretórios (`app/strategies/microstructure`,
+prontidão operacional, Fases 13/15), `app/apexflow` (motor de decisão por
+fluxo de ticks: tick flow, contexto de mercado, multi-timeframe, momentum,
+volatilidade, spread, liquidez, feature vector, decisão, risco dinâmico e
+Learning Engine) e `app/cli.py` (comandos de
+diagnóstico/coleta/análise/backtest/ML/paper trading/demo/autopilot/
+apexflow/monitor/preflight). Os demais diretórios (`app/strategies/microstructure`,
 `app/strategies/ensemble` etc.) existem como esqueleto vazio, reservados
 para as fases correspondentes.
 
@@ -586,6 +644,10 @@ para as fases correspondentes.
 - `docs/runbook.md` — procedimentos operacionais práticos: instalação,
   rotina de operação, checagens periódicas e resposta a incidentes
   (Fase 15).
+- `docs/autopilot.md` — piloto automático: sessões de negociação, perfil de
+  volume por hora, seleção de operacional e status ao vivo.
+- `docs/apexflow.md` — motor ApexFlow AI: fluxo de ticks, contexto de
+  mercado, feature vector, decisão com probabilidade e Learning Engine.
 - `docs/development-phases.md` — roadmap de 15 fases e critérios de aceite.
 - `docs/assumptions.md` — decisões e premissas tomadas na Fase 0, incluindo
   o motivo de usar Python 3.14 e SQLite nos testes nesta fase.
