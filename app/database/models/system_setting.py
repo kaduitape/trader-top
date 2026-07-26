@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import String
+from sqlalchemy import String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base, TimestampMixin
@@ -13,7 +13,10 @@ class SystemSetting(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
-    value: Mapped[str] = mapped_column(String(1000), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    """`Text` (migration 0008), nao `String(1000)`: o status ao vivo do
+    piloto automatico (`app.execution.autopilot_status`) carrega um feed de
+    atividades que passa desse limite."""
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     def __repr__(self) -> str:

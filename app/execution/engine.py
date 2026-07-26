@@ -126,6 +126,7 @@ class DemoExecutionEngine:
         magic: int = 0,
         model_version: str = "rule-based",
         clock: Callable[[], datetime] | None = None,
+        scope_across_timeframes: bool = False,
     ) -> None:
         self._session = session
         self._client = client
@@ -133,6 +134,14 @@ class DemoExecutionEngine:
         self._symbol = symbol
         self._symbol_id = symbol_id
         self._timeframe = timeframe
+        self._risk_timeframe: str | None = None if scope_across_timeframes else timeframe
+        """Escopo dos limites de risco e da busca por posição aberta.
+
+        `None` (piloto automático) abrange TODOS os timeframes desta
+        estratégia neste símbolo. É obrigatório quando quem chama pode
+        trocar de timeframe entre ciclos: contar por timeframe faria a
+        troca de M5 para M15 zerar os contadores do dia e esconder a
+        posição já aberta, contornando os limites sem intenção."""
         self._point = point
         self._account = account
         self._symbol_spec = symbol_spec
@@ -146,24 +155,24 @@ class DemoExecutionEngine:
     def _compute_daily_stats(self, now: datetime) -> DailyStats:
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         trades_today = self._trade_repo.count_entries_since(
-            self._symbol_id, self._timeframe, self._strategy.name, since=start_of_day
+            self._symbol_id, self._risk_timeframe, self._strategy.name, since=start_of_day
         )
         daily_pnl = self._trade_repo.sum_net_pnl_since(
-            self._symbol_id, self._timeframe, self._strategy.name, since=start_of_day
+            self._symbol_id, self._risk_timeframe, self._strategy.name, since=start_of_day
         )
         consecutive_losses = 0
         for trade in self._trade_repo.get_recent_closed(
-            self._symbol_id, self._timeframe, self._strategy.name, limit=20
+            self._symbol_id, self._risk_timeframe, self._strategy.name, limit=20
         ):
             if trade.net_pnl is not None and float(trade.net_pnl) < 0:
                 consecutive_losses += 1
             else:
                 break
         last_entry = self._trade_repo.get_last_entry_time(
-            self._symbol_id, self._timeframe, self._strategy.name
+            self._symbol_id, self._risk_timeframe, self._strategy.name
         )
         active = self._trade_repo.get_active_position(
-            self._symbol_id, self._timeframe, self._strategy.name
+            self._symbol_id, self._risk_timeframe, self._strategy.name
         )
         return DailyStats(
             trades_today=trades_today,
@@ -233,7 +242,7 @@ class DemoExecutionEngine:
         events: list[DemoExecutionEvent] = []
 
         active_trade = self._trade_repo.get_active_position(
-            self._symbol_id, self._timeframe, self._strategy.name
+            self._symbol_id, self._risk_timeframe, self._strategy.name
         )
         if active_trade is not None:
             if active_trade.mt5_position_ticket is None:

@@ -75,6 +75,12 @@ from app.database.repositories.symbol_repository import SymbolRepository
 from app.database.repositories.system_setting_repository import get_current_mode, set_mode
 from app.database.repositories.tick_repository import TickRepository
 from app.database.session import get_session_factory
+from app.execution.automation_settings import load_trading_automation_config
+from app.execution.autopilot import run_autopilot_cycle
+from app.execution.autopilot_status import (
+    AutopilotStatusPublisher,
+    load_autopilot_status,
+)
 from app.execution.engine import (
     DemoExecutionEngine,
     OrderRejectedByBroker,
@@ -1585,6 +1591,126 @@ def cmd_demo_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_autopilot_run(args: argparse.Namespace) -> int:
+    """Roda o piloto automatico N vezes contra o terminal MT5 local.
+
+    Mesmo caminho de codigo do worker Windows (`app.mt5.auto_sync`) — aqui
+    ele so fica em primeiro plano, util para acompanhar as decisoes no
+    terminal enquanto o robo opera.
+    """
+    connection_config = MT5ConnectionConfig.from_settings(get_settings())
+    publisher = AutopilotStatusPublisher(get_session_factory(), worker_id="cli")
+
+    try:
+        with MT5Connection(connection_config) as connection:
+            account = fetch_account_snapshot(connection.client)
+            if account is None:
+                print("ERRO: conectado, mas a conta nao respondeu.", file=sys.stderr)
+                return 1
+            available_symbols = list_symbols(connection.client)
+
+            for iteration in range(args.iterations):
+                session = get_session_factory()()
+                try:
+                    config = load_trading_automation_config(session)
+                    if args.symbol:
+                        config = dataclasses.replace(config, symbol=args.symbol.strip().upper())
+                    if not config.enabled and not args.force:
+                        print(
+                            "Piloto automatico desligado na configuracao. Ligue no "
+                            "dashboard (/dashboard/autopilot) ou use --force para um "
+                            "ciclo avulso.",
+                            file=sys.stderr,
+                        )
+                        return 1
+
+                    result = run_autopilot_cycle(
+                        session,
+                        connection.client,
+                        config=dataclasses.replace(config, enabled=True),
+                        account=account,
+                        publisher=publisher,
+                        available_symbols=available_symbols,
+                    )
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    raise
+                finally:
+                    session.close()
+
+                playbook = result.playbook
+                print(f"[{iteration}] {result.phase.value}: {result.message}")
+                if playbook is not None:
+                    print(
+                        f"      operacional={playbook.kind.value} "
+                        f"timeframe={playbook.timeframe} "
+                        f"score_minimo={playbook.analysis_threshold:.0f} "
+                        f"risco={playbook.risk_factor:.2f} "
+                        f"aderencia={playbook.fit_score:.0f}"
+                    )
+                    for reason in playbook.blockers or playbook.reasons:
+                        print(f"      - {reason}")
+                if result.blocking_error:
+                    print(f"      BLOQUEIO: {result.blocking_error}", file=sys.stderr)
+
+                if iteration < args.iterations - 1 and args.poll_seconds > 0:
+                    time.sleep(args.poll_seconds)
+    except MT5ConnectionError as exc:
+        print(f"ERRO: {exc}", file=sys.stderr)
+        return 1
+    except MT5RealAccountError as exc:
+        print(f"ERRO: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+def cmd_autopilot_status(args: argparse.Namespace) -> int:
+    session = get_session_factory()()
+    try:
+        status = load_autopilot_status(session)
+    finally:
+        session.close()
+
+    if args.json:
+        _print_json(dataclasses.asdict(status))
+        return 0
+
+    freshness = "ao vivo" if status.is_fresh() else "DESATUALIZADO"
+    print(f"piloto automatico: {'ligado' if status.enabled else 'desligado'} ({freshness})")
+    print(f"fase: {status.phase_label} — {status.headline}")
+    if status.detail:
+        print(f"      {status.detail}")
+    if status.broker_symbol:
+        print(f"moeda: {status.broker_symbol} ({status.timeframe or '-'})")
+    if status.playbook_label:
+        print(f"operacional: {status.playbook_label}")
+    if status.session_label:
+        print(f"sessao: {status.session_label} [{status.active_sessions}]")
+    if status.volume_label:
+        ratio = f" ({status.volume_ratio:.2f}x)" if status.volume_ratio is not None else ""
+        print(f"volume: {status.volume_label}{ratio}")
+    if status.analysis_score is not None:
+        print(
+            f"score: {status.analysis_score:.1f} / minimo "
+            f"{status.analysis_threshold:.0f} -> {status.analysis_recommendation}"
+        )
+    if status.open_position:
+        print(f"posicao aberta: {status.open_position}")
+    print(f"operacoes hoje: {status.trades_today} | resultado: {status.pnl_today:+.2f}")
+    for blocker in status.blockers:
+        print(f"  BLOQUEIO: {blocker}")
+    if status.last_error:
+        print(f"  ERRO: {status.last_error}")
+
+    if status.activities:
+        print("\n--- atividades recentes ---")
+        for activity in reversed(status.activities[-args.limit :]):
+            print(f"{activity.at[11:19]} [{activity.level}] {activity.message}")
+    return 0
+
+
 def cmd_monitor_model(args: argparse.Namespace) -> int:
     registry = ModelRegistry(get_settings().ml_models_dir)
     try:
@@ -2426,6 +2552,37 @@ def build_parser() -> argparse.ArgumentParser:
     analysis_run_parser.add_argument("--threshold", type=float, default=None)
     analysis_run_parser.add_argument("--json", action="store_true")
 
+    autopilot_parser = subparsers.add_parser(
+        "autopilot",
+        help=(
+            "Piloto automatico: escolhe o operacional pelo horario/volume do par e "
+            "opera em conta DEMO"
+        ),
+    )
+    autopilot_subparsers = autopilot_parser.add_subparsers(
+        dest="autopilot_command", required=True
+    )
+    autopilot_run_parser = autopilot_subparsers.add_parser(
+        "run", help="Roda N ciclos do piloto automatico (exige modo DEMO e conta demo)"
+    )
+    autopilot_run_parser.add_argument(
+        "--symbol",
+        default=None,
+        help="Sobrescreve a moeda configurada no dashboard, so para esta execucao",
+    )
+    autopilot_run_parser.add_argument("--iterations", type=int, default=1)
+    autopilot_run_parser.add_argument("--poll-seconds", type=float, default=15.0)
+    autopilot_run_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Roda mesmo com a automacao desligada na configuracao (ciclo avulso)",
+    )
+    autopilot_status_parser = autopilot_subparsers.add_parser(
+        "status", help="Mostra o que o piloto automatico esta fazendo agora"
+    )
+    autopilot_status_parser.add_argument("--limit", type=int, default=10)
+    autopilot_status_parser.add_argument("--json", action="store_true")
+
     preflight_parser = subparsers.add_parser(
         "preflight", help="Checagens de prontidão operacional (Fase 15)"
     )
@@ -2516,6 +2673,12 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_demo_run(args)
         if args.demo_command == "status":
             return cmd_demo_status(args)
+
+    if args.command == "autopilot":
+        if args.autopilot_command == "run":
+            return cmd_autopilot_run(args)
+        if args.autopilot_command == "status":
+            return cmd_autopilot_status(args)
 
     if args.command == "monitor":
         if args.monitor_command == "model":

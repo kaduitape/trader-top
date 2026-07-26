@@ -46,6 +46,11 @@ from app.execution.automation_settings import (
     load_trading_automation_config,
     save_trading_automation_config,
 )
+from app.execution.autopilot_status import (
+    AutopilotStatus,
+    load_autopilot_status,
+    summarize_activities,
+)
 from app.market.catalog import (
     GROUP_LABELS,
     MARKET_CATALOG,
@@ -698,6 +703,224 @@ def _mask_api_key(key: str) -> str:
     if len(key) <= 4:
         return "*" * len(key)
     return "*" * (len(key) - 4) + key[-4:]
+
+
+_AUTOPILOT_READY_MESSAGE = (
+    "Escolha a moeda e ligue: o robo decide o operacional pelo horario e pelo volume."
+)
+
+
+def _autopilot_payload(db: Session) -> dict:
+    """Estado do piloto para a pagina e para o polling JSON — mesma fonte,
+    para que a tela nunca discorde de si mesma entre um refresh e outro."""
+    config = load_trading_automation_config(db)
+    status = load_autopilot_status(db)
+    sync_status = load_sync_status(db)
+    worker_online = heartbeat_is_fresh(sync_status)
+    fresh = status.is_fresh()
+
+    if not config.enabled:
+        headline = "Piloto automatico desligado."
+        detail = _AUTOPILOT_READY_MESSAGE
+    elif not worker_online:
+        headline = "Ligado, mas o conector do MetaTrader esta offline."
+        detail = "Abra o terminal MT5 no Windows e mantenha o worker rodando."
+    elif not fresh:
+        headline = "Ligado, aguardando o primeiro ciclo do worker."
+        detail = (
+            "O status ao vivo aparece assim que o worker publicar — se demorar, "
+            "confira os logs do worker."
+        )
+    else:
+        headline = status.headline
+        detail = status.detail
+
+    return {
+        "config": config,
+        "status": status,
+        "worker_online": worker_online,
+        "status_fresh": fresh,
+        "headline": headline,
+        "detail": detail,
+        "working": config.enabled and worker_online and fresh and status.is_working,
+        "current_mode": get_current_mode(db).value,
+    }
+
+
+def _autopilot_json(payload: dict) -> dict:
+    status: AutopilotStatus = payload["status"]
+    config: TradingAutomationConfig = payload["config"]
+    return {
+        "enabled": config.enabled,
+        "autopilot": config.autopilot,
+        "symbol": config.symbol,
+        "broker_symbol": status.broker_symbol,
+        "worker_online": payload["worker_online"],
+        "status_fresh": payload["status_fresh"],
+        "working": payload["working"],
+        "current_mode": payload["current_mode"],
+        "phase": status.phase,
+        "phase_label": status.phase_label,
+        "phase_icon": status.phase_icon,
+        "headline": payload["headline"],
+        "detail": payload["detail"],
+        "playbook_label": status.playbook_label,
+        "playbook_description": status.playbook_description,
+        "playbook_icon": status.playbook_icon,
+        "timeframe": status.timeframe,
+        "fit_score": status.fit_score,
+        "analysis_score": status.analysis_score,
+        "analysis_threshold": status.analysis_threshold,
+        "analysis_recommendation": status.analysis_recommendation,
+        "risk_factor": status.risk_factor,
+        "session_label": status.session_label,
+        "session_rating": status.session_rating,
+        "active_sessions": status.active_sessions,
+        "volume_label": status.volume_label,
+        "volume_level": status.volume_level,
+        "volume_ratio": status.volume_ratio,
+        "trend": status.trend,
+        "volatility": status.volatility,
+        "open_position": status.open_position,
+        "trades_today": status.trades_today,
+        "pnl_today": status.pnl_today,
+        "cycles": status.cycles,
+        "updated_at": status.updated_at,
+        "reasons": list(status.reasons),
+        "blockers": list(status.blockers),
+        "last_error": status.last_error,
+        "activities": summarize_activities(status.activities),
+    }
+
+
+@router.get("/dashboard/autopilot", response_class=HTMLResponse)
+def dashboard_autopilot(
+    request: Request,
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    saved: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    payload = _autopilot_payload(db)
+    symbols = SymbolRepository(db).list_active()
+    return templates.TemplateResponse(
+        request,
+        "dashboard/autopilot.html",
+        {
+            "user": user,
+            **payload,
+            "market_groups": grouped_availability(symbols),
+            "market_group_labels": GROUP_LABELS,
+            "saved": saved,
+            "error": error,
+        },
+    )
+
+
+@router.get("/dashboard/autopilot/status", response_class=JSONResponse)
+def dashboard_autopilot_status(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Consumido pelo polling da pagina — o painel mostra o que o robo esta
+    fazendo sem recarregar a tela."""
+    return JSONResponse(_autopilot_json(_autopilot_payload(db)))
+
+
+@router.post("/dashboard/autopilot")
+def dashboard_autopilot_save(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    symbol: str = Form(...),
+    enabled: str = Form(""),
+    confirm_text: str = Form(""),
+) -> RedirectResponse:
+    """Liga/desliga o piloto e define a moeda.
+
+    Reusa exatamente os mesmos portoes de `/dashboard/settings/trading`
+    (confirmacao digitada, modo DEMO, worker online, conta demo) — a tela
+    simplificada nao pode ser um caminho mais permissivo para chegar ao
+    mesmo lugar.
+    """
+    normalized_symbol = symbol.strip().upper()
+    requested_enabled = bool(enabled)
+    config = load_trading_automation_config(db)
+
+    available = {
+        availability.instrument.code
+        for availability in catalog_availability(SymbolRepository(db).list_active())
+        if availability.is_available
+    }
+    if normalized_symbol not in available:
+        return RedirectResponse(
+            url=(
+                "/dashboard/autopilot?error="
+                f"{quote('escolha uma moeda ja sincronizada com o MetaTrader.')}"
+            ),
+            status_code=303,
+        )
+
+    if requested_enabled:
+        sync_status = load_sync_status(db)
+        if confirm_text.strip().upper() != "DEMO":
+            return RedirectResponse(
+                url=(
+                    "/dashboard/autopilot?error="
+                    f"{quote('digite DEMO para ligar o piloto automatico.')}"
+                ),
+                status_code=303,
+            )
+        if get_current_mode(db) != SystemMode.DEMO:
+            return RedirectResponse(
+                url=(
+                    "/dashboard/autopilot?error="
+                    f"{quote('altere primeiro o modo operacional para DEMO.')}"
+                ),
+                status_code=303,
+            )
+        if not (
+            heartbeat_is_fresh(sync_status)
+            and sync_status.connected
+            and sync_status.account_is_demo is True
+        ):
+            return RedirectResponse(
+                url=(
+                    "/dashboard/autopilot?error="
+                    f"{quote('conecte e teste uma conta MT5 demo antes de ligar.')}"
+                ),
+                status_code=303,
+            )
+
+    updated = replace(
+        config,
+        enabled=requested_enabled,
+        autopilot=True,
+        symbol=normalized_symbol,
+    )
+    save_trading_automation_config(db, updated)
+
+    sync_config = load_sync_config(db)
+    if requested_enabled and normalized_symbol not in sync_config.symbols:
+        # Ligar o piloto em uma moeda fora do plano de coleta deixaria o
+        # robo sem candles para sempre — inclui a moeda em vez de falhar
+        # silenciosamente depois.
+        save_sync_config(
+            db, replace(sync_config, symbols=(*sync_config.symbols, normalized_symbol))
+        )
+    if requested_enabled and not sync_config.enabled:
+        save_sync_config(db, replace(load_sync_config(db), enabled=True))
+
+    AuditLogRepository(db).record(
+        action="autopilot_toggle",
+        entity="trading_automation",
+        detail=(
+            f"piloto automatico {'ligado' if requested_enabled else 'desligado'} "
+            f"em {normalized_symbol}"
+        ),
+        user_id=user.id,
+    )
+    db.commit()
+    return RedirectResponse(url="/dashboard/autopilot?saved=1", status_code=303)
 
 
 @router.get("/dashboard/settings/trading", response_class=HTMLResponse)

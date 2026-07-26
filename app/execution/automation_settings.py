@@ -24,6 +24,19 @@ _TIMEFRAME_CODES = frozenset(timeframe.value for timeframe in ANALYSIS_TIMEFRAME
 @dataclass(frozen=True, slots=True)
 class TradingAutomationConfig:
     enabled: bool = False
+    autopilot: bool = True
+    """Piloto automatico (`app.execution.autopilot`): o robo escolhe sozinho
+    o operacional, o timeframe de execucao, o score minimo e o
+    multiplicador de risco a partir da sessao e do volume do par.
+
+    Ligado por padrao — e o modo que o operador pediu ("escolho a moeda, o
+    robo decide o resto"). Desligado, o comportamento anterior permanece
+    intacto: `timeframe`/`analysis_threshold` fixos, definidos a mao.
+
+    O piloto so pode tornar a operacao MAIS restritiva que a configuracao
+    (score minimo maior, risco menor) — nunca mais frouxa; ver
+    `app.execution.playbook`."""
+
     symbol: str = "XAUUSD"
     timeframe: str = "M15"
     analysis_threshold: float = 90.0
@@ -78,6 +91,7 @@ def load_trading_automation_config(session: Session) -> TradingAutomationConfig:
 
     return TradingAutomationConfig(
         enabled=bool(data.get("enabled", defaults.enabled)),
+        autopilot=bool(data.get("autopilot", defaults.autopilot)),
         symbol=symbol[:32],
         timeframe=timeframe,
         analysis_threshold=_bounded_float(

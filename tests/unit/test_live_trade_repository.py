@@ -292,3 +292,76 @@ def test_list_all_recent_spans_multiple_symbols_and_resolves_names(db_session) -
     symbol_names = {name for _, name in results}
     assert {"LIVE_SYM11A", "LIVE_SYM11B"} <= symbol_names
     assert results[0][1] == "LIVE_SYM11B"
+
+
+# --- Escopo entre timeframes (piloto automatico) --------------------------
+#
+# O piloto automatico troca de timeframe entre ciclos conforme o horario e o
+# volume. Se os limites de risco continuassem contados por timeframe, mudar
+# de M5 para M15 zeraria os contadores do dia e esconderia a posicao aberta
+# — os testes abaixo travam o comportamento que impede isso.
+
+
+def _entry(db_session, symbol_id: int, timeframe: str, *, at: datetime) -> None:
+    LiveTradeRepository(db_session).create(
+        symbol_id=symbol_id,
+        timeframe=timeframe,
+        strategy_name="autopilot",
+        model_version="test",
+        signal_id=f"sig-{timeframe}-{at.isoformat()}",
+        direction="LONG",
+        order_state=OrderState.POSITION_OPEN,
+        signal_time=at,
+        entry_time=at,
+        entry_price=Decimal("1.1000"),
+        volume=Decimal("0.10"),
+        mt5_position_ticket=hash((timeframe, at)) % 100_000,
+    )
+
+
+def test_active_position_is_found_across_timeframes(db_session) -> None:
+    symbol_id = _symbol_id(db_session, "EURUSD_SCOPE_1")
+    at = datetime(2026, 7, 22, 10, 0)
+    _entry(db_session, symbol_id, "M5", at=at)
+    repository = LiveTradeRepository(db_session)
+
+    # Escopo por timeframe: M15 nao ve a posicao aberta em M5.
+    assert repository.get_active_position(symbol_id, "M15", "autopilot") is None
+    # Escopo do simbolo inteiro (timeframe=None): ve.
+    assert repository.get_active_position(symbol_id, None, "autopilot") is not None
+
+
+def test_daily_counters_span_timeframes_when_scope_is_none(db_session) -> None:
+    symbol_id = _symbol_id(db_session, "EURUSD_SCOPE_2")
+    start_of_day = datetime(2026, 7, 22, 0, 0)
+    _entry(db_session, symbol_id, "M5", at=datetime(2026, 7, 22, 10, 0))
+    _entry(db_session, symbol_id, "M15", at=datetime(2026, 7, 22, 11, 0))
+    _entry(db_session, symbol_id, "M30", at=datetime(2026, 7, 22, 12, 0))
+    repository = LiveTradeRepository(db_session)
+
+    assert (
+        repository.count_entries_since(
+            symbol_id, "M5", "autopilot", since=start_of_day
+        )
+        == 1
+    )
+    assert (
+        repository.count_entries_since(
+            symbol_id, None, "autopilot", since=start_of_day
+        )
+        == 3
+    )
+
+
+def test_last_entry_time_spans_timeframes_when_scope_is_none(db_session) -> None:
+    symbol_id = _symbol_id(db_session, "EURUSD_SCOPE_3")
+    _entry(db_session, symbol_id, "M5", at=datetime(2026, 7, 22, 10, 0))
+    _entry(db_session, symbol_id, "M15", at=datetime(2026, 7, 22, 15, 0))
+    repository = LiveTradeRepository(db_session)
+
+    assert repository.get_last_entry_time(symbol_id, "M5", "autopilot") == datetime(
+        2026, 7, 22, 10, 0
+    )
+    assert repository.get_last_entry_time(symbol_id, None, "autopilot") == datetime(
+        2026, 7, 22, 15, 0
+    )
