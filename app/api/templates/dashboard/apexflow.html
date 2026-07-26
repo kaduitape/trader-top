@@ -67,6 +67,15 @@
                 style="width: {% if latest %}{{ (latest.probability_abstain * 100)|round(1) }}{% else %}0{% endif %}%"></span></div>
         </div>
     </div>
+    <div class="tp-apex-runtime" id="apexHalt" {% if not status.is_halted %}hidden{% endif %}>
+        <i class="bi bi-pause-circle-fill"></i>
+        <span id="apexHaltText">{{ status.halt_detail }}</span>
+    </div>
+    <div class="tp-apex-runtime is-info" id="apexStopManagement"
+         {% if not status.stop_management %}hidden{% endif %}>
+        <i class="bi bi-shield-fill-check"></i>
+        <span id="apexStopText">{{ status.stop_management }}</span>
+    </div>
     <p class="tp-apex-threshold">
         Confiança mínima para executar:
         <strong>{{ "%.0f"|format(apexflow_config.min_confidence * 100) }}%</strong>.
@@ -97,6 +106,33 @@
         <span class="tp-stat-icon"><i class="bi bi-layers"></i></span>
         <span class="tp-stat-copy"><span>Alinhamento MTF</span><strong id="apexMtf">
             {%- if latest and latest.mtf_alignment is not none %}{{ "%+.2f"|format(latest.mtf_alignment) }}{% else %}—{% endif -%}
+        </strong></span>
+    </div>
+</div>
+
+<div class="tp-stat-grid">
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-stopwatch"></i></span>
+        <span class="tp-stat-copy"><span>Latência do feed</span><strong id="apexLatency">
+            {%- if status.latency_seconds is not none %}{{ "%.2f"|format(status.latency_seconds) }}s{% else %}—{% endif -%}
+        </strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-graph-down-arrow"></i></span>
+        <span class="tp-stat-copy"><span>Drawdown do dia</span><strong id="apexDrawdown">
+            {%- if status.drawdown_pct is not none %}{{ "%.2f"|format(status.drawdown_pct) }}%{% else %}—{% endif -%}
+        </strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-cash-coin"></i></span>
+        <span class="tp-stat-copy"><span>Resultado do dia</span><strong id="apexPnlToday">
+            {{ "%+.2f"|format(status.pnl_today) }}
+        </strong></span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-robot"></i></span>
+        <span class="tp-stat-copy"><span>Estado do robô</span><strong id="apexRobotPhase">
+            {{ status.phase_label }}
         </strong></span>
     </div>
 </div>
@@ -301,6 +337,25 @@
         text("apexSpread", number(data.spread_points, 1));
         text("apexMtf", data.mtf_alignment === null || data.mtf_alignment === undefined
             ? "—" : (data.mtf_alignment >= 0 ? "+" : "") + Number(data.mtf_alignment).toFixed(2));
+        text("apexLatency", data.latency_seconds === null || data.latency_seconds === undefined
+            ? "—" : Number(data.latency_seconds).toFixed(2) + "s");
+        text("apexDrawdown", data.drawdown_pct === null || data.drawdown_pct === undefined
+            ? "—" : Number(data.drawdown_pct).toFixed(2) + "%");
+        text("apexPnlToday", (data.pnl_today >= 0 ? "+" : "") + Number(data.pnl_today || 0).toFixed(2));
+        text("apexRobotPhase", data.robot_phase || "—");
+
+        const halt = document.getElementById("apexHalt");
+        if (halt) {
+            const halted = Boolean(data.halt_reason) && data.halt_reason !== "NONE";
+            halt.hidden = !halted;
+            text("apexHaltText", data.halt_detail || "");
+        }
+        const stopBox = document.getElementById("apexStopManagement");
+        if (stopBox) {
+            stopBox.hidden = !data.stop_management;
+            text("apexStopText", data.stop_management || "");
+        }
+
         text("apexTotal", data.total_decisions);
         text("apexEntries", data.entries);
         text("apexAbstentions", data.abstentions);

@@ -53,6 +53,9 @@ class LiveTradeRepository:
         )
         return self._session.execute(stmt).scalars().first()
 
+    def get_by_id(self, trade_id: int) -> LiveTrade | None:
+        return self._session.get(LiveTrade, trade_id)
+
     def create(
         self,
         *,
@@ -88,6 +91,9 @@ class LiveTradeRepository:
             entry_time=entry_time,
             entry_price=entry_price,
             stop_loss=stop_loss,
+            # O trailing reescreve `stop_loss`; `initial_stop_loss` guarda o
+            # risco original, que é o que define 1R.
+            initial_stop_loss=stop_loss,
             take_profit=take_profit,
             volume=volume,
         )
@@ -107,6 +113,15 @@ class LiveTradeRepository:
         trade.exit_time = exit_time
         trade.exit_price = exit_price
         trade.net_pnl = net_pnl
+        self._session.flush()
+
+    def update_stop_loss(self, trade: LiveTrade, stop_loss: Decimal) -> None:
+        """Persiste um stop já ACEITO pela corretora (trailing/break-even).
+
+        Só é chamado depois de `modify_position` confirmar — gravar um nível
+        recusado faria o sistema acreditar em uma proteção que não existe.
+        """
+        trade.stop_loss = stop_loss
         self._session.flush()
 
     def mark_reconciling(self, trade: LiveTrade) -> None:

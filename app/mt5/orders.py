@@ -1,11 +1,16 @@
 """Leitura de ordens/historico e, a partir da Fase 11, envio de ordens a
 mercado — sempre em conta demo, nunca em conta real.
 
-`send_market_order` e a UNICA funcao deste projeto autorizada a chamar
-`client.order_send` — e recusa incondicionalmente (levanta
-`MT5RealAccountError`, nunca apenas loga um aviso) se a conta conectada
-nao for demo (`AccountSnapshot.is_demo`). Esse bloqueio nao pode ser
-contornado por configuracao."""
+`send_market_order` e `modify_position` sao as UNICAS funcoes deste projeto
+autorizadas a chamar `client.order_send` — e as duas recusam
+incondicionalmente (levantam `MT5RealAccountError`, nunca apenas logam um
+aviso) se a conta conectada nao for demo (`AccountSnapshot.is_demo`). Esse
+bloqueio nao pode ser contornado por configuracao.
+
+`modify_position` altera APENAS stop-loss e take-profit de uma posicao que
+ja existe (`TRADE_ACTION_SLTP`). Nao abre, nao aumenta e nao fecha posicao —
+e a unica coisa que o gerenciamento de trailing stop / break-even precisa
+fazer, e deliberadamente a unica coisa que ela consegue fazer."""
 
 from __future__ import annotations
 
@@ -31,6 +36,9 @@ _ORDER_FILLING_RETURN_DEFAULT = 2
 _SYMBOL_FILLING_FOK_FLAG = 1
 _SYMBOL_FILLING_IOC_FLAG = 2
 _TRADE_RETCODE_DONE_DEFAULT = 10009
+_TRADE_ACTION_SLTP_DEFAULT = 2
+"""`TRADE_ACTION_SLTP`: altera so os niveis de protecao de uma posicao
+existente. Lido do cliente via `getattr`; este e o fallback documentado."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,5 +248,89 @@ def send_market_order(
         deal_ticket=int(getattr(result, "deal", 0)) or None,
         position_ticket=int(getattr(result, "position", 0)) or None,
         price=float(getattr(result, "price", 0.0)) if success else None,
+        comment=str(getattr(result, "comment", "")),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ModifyPositionResult:
+    success: bool
+    retcode: int
+    stop_loss: float
+    take_profit: float
+    comment: str
+
+
+def modify_position(
+    client: MT5ClientProtocol,
+    *,
+    account: AccountSnapshot,
+    symbol: str,
+    position_ticket: int,
+    stop_loss: float,
+    take_profit: float,
+) -> ModifyPositionResult:
+    """Altera stop-loss/take-profit de uma posicao aberta (trailing/break-even).
+
+    Mesmo portao incondicional de `send_market_order`: conta que nao seja
+    demo levanta `MT5RealAccountError`, sem excecao e sem configuracao que
+    contorne.
+
+    Usa `TRADE_ACTION_SLTP`, que por definicao da API do MetaTrader so
+    consegue mexer nos niveis de protecao — nao existe caminho aqui para
+    abrir, aumentar ou fechar posicao, nem por acidente.
+    """
+    if not account.is_demo:
+        raise MT5RealAccountError(
+            f"recusa modificar posicao: a conta {account.login}@{account.server} não é demo."
+        )
+
+    request = {
+        "action": getattr(client, "TRADE_ACTION_SLTP", _TRADE_ACTION_SLTP_DEFAULT),
+        "symbol": symbol,
+        "position": position_ticket,
+        "sl": stop_loss,
+        "tp": take_profit,
+    }
+
+    result = client.order_send(request)
+    if result is None:
+        code, description = client.last_error()
+        logger.warning(
+            "mt5_modify_position_failed",
+            extra={
+                "mt5_error_code": code,
+                "mt5_error_description": description,
+                "symbol": symbol,
+                "position_ticket": position_ticket,
+            },
+        )
+        return ModifyPositionResult(
+            success=False,
+            retcode=code,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            comment=description,
+        )
+
+    retcode = int(getattr(result, "retcode", 0))
+    done_code = getattr(client, "TRADE_RETCODE_DONE", _TRADE_RETCODE_DONE_DEFAULT)
+    success = retcode == done_code
+    if not success:
+        logger.warning(
+            "mt5_modify_position_rejected",
+            extra={
+                "retcode": retcode,
+                "symbol": symbol,
+                "position_ticket": position_ticket,
+                "comment": getattr(result, "comment", ""),
+            },
+        )
+
+    return ModifyPositionResult(
+        success=success,
+        retcode=retcode,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
         comment=str(getattr(result, "comment", "")),
     )

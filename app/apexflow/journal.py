@@ -21,6 +21,7 @@ from app.apexflow.context import MarketContext
 from app.apexflow.decision import ApexFlowDecision
 from app.apexflow.features import FeatureVector
 from app.database.models.apexflow_decision import ApexFlowDecisionRecord
+from app.database.models.live_trade import LiveTrade
 from app.database.repositories.apexflow_decision_repository import (
     ApexFlowDecisionRepository,
 )
@@ -76,6 +77,48 @@ def record_decision(
         ),
         feature_vector=json.dumps(vector.as_dict(), ensure_ascii=True),
         live_trade_id=live_trade_id,
+    )
+
+
+def r_multiple_of(trade: LiveTrade) -> float | None:
+    """R realizado da operacao fechada, ou `None` quando nao ha como saber.
+
+    Usa `initial_stop_loss` (migration 0010), o stop com que a operacao
+    NASCEU — nunca o `stop_loss` atual, que o trailing pode ter movido e que
+    produziria um R inflado. Operacoes anteriores a essa coluna, ou sem
+    preco de saida, devolvem `None` em vez de um numero inventado.
+    """
+    if (
+        trade.entry_price is None
+        or trade.exit_price is None
+        or trade.initial_stop_loss is None
+    ):
+        return None
+    entry = float(trade.entry_price)
+    risk = abs(entry - float(trade.initial_stop_loss))
+    if risk <= 0:
+        return None
+    moved = float(trade.exit_price) - entry
+    if str(trade.direction).upper() == "SHORT":
+        moved = -moved
+    return moved / risk
+
+
+def record_trade_result(session: Session, trade: LiveTrade) -> bool:
+    """Anexa o resultado da operacao fechada `trade` a decisao que a gerou.
+
+    Ponto unico de entrada usado pelo ciclo do piloto quando a reconciliacao
+    detecta um fechamento. Devolve `False` quando nao existe decisao ligada
+    (operacao aberta por outro caminho) — caso legitimo, nunca excecao.
+    """
+    if trade.net_pnl is None:
+        return False
+    return record_outcome(
+        session,
+        live_trade_id=trade.id,
+        net_pnl=float(trade.net_pnl),
+        r_multiple=r_multiple_of(trade),
+        closed_at=trade.exit_time,
     )
 
 

@@ -30,6 +30,7 @@ from app.apexflow.liquidity import LiquidityReading, LiquidityState
 from app.apexflow.momentum import MomentumReading, MomentumState
 from app.apexflow.mtf import MultiTimeframeView
 from app.apexflow.spread import SpreadReading, SpreadVerdict
+from app.apexflow.structures import ChartStructure, StructureKind, latest_by_kind
 from app.apexflow.tick_flow import TickFlowMetrics
 from app.apexflow.volatility import VolatilityReading, VolatilityState
 from app.market.price_action import CandlestickPattern, PatternDirection, PatternName
@@ -37,9 +38,16 @@ from app.market.regimes import Trend
 from app.market.sessions import SessionRating, SymbolSessionState
 from app.market.volume_profile import VolumeLevel, VolumeReading
 
-FEATURE_VERSION = "apexflow-1"
+FEATURE_VERSION = "apexflow-2"
 """Suba a versao a cada mudanca em `FEATURE_NAMES` (nomes, ordem ou
-semantica). Modelos treinados guardam a versao com que foram treinados."""
+semantica). Modelos treinados guardam a versao com que foram treinados.
+
+Historico:
+- `apexflow-1` — versao inicial.
+- `apexflow-2` — acrescenta VWAP (`indicator_vwap_20`, `indicator_dist_vwap_20`)
+  e as nove estruturas de grafico (`structure_*`), completando o Price Action
+  Engine. Um modelo treinado em `apexflow-1` NAO pode receber um vetor
+  `apexflow-2` sem retreino: as colunas novas mudam o tamanho do vetor."""
 
 NEUTRAL_FILL = 0.0
 """Valor usado no vetor numerico quando a feature nao existe. A mascara
@@ -75,6 +83,8 @@ _INDICATOR_FEATURES: tuple[str, ...] = (
     "zscore_20",
     "roc_10",
     "relative_volume_20",
+    "vwap_20",
+    "dist_vwap_20",
     "avg_spread_20",
     "spread_variation_20",
     "realized_volatility_20",
@@ -151,6 +161,7 @@ def _feature_names() -> tuple[str, ...]:
     ]
     names.extend(f"pattern_{pattern.value.lower()}" for pattern in _PATTERN_FEATURES)
     names.append("pattern_dominant_direction")
+    names.extend(f"structure_{kind.value.lower()}" for kind in StructureKind)
     names.extend(f"indicator_{name}" for name in _INDICATOR_FEATURES)
     return tuple(names)
 
@@ -248,9 +259,14 @@ def build_feature_vector(
     volume: VolumeReading,
     context: MarketContext,
     patterns: list[CandlestickPattern] | None = None,
+    structures: list[ChartStructure] | None = None,
     now: datetime | None = None,
 ) -> FeatureVector:
-    """Monta o vetor a partir das leituras de todos os motores."""
+    """Monta o vetor a partir das leituras de todos os motores.
+
+    `structures` ausente vale zero em todas as colunas `structure_*` — o
+    mesmo tratamento de um padrao nao detectado, porque "nao encontrei esta
+    estrutura" e uma informacao valida, nao uma lacuna."""
     resolved_now = now or datetime.now(UTC)
     detected = patterns or []
     latest_by_name = {pattern.name: pattern for pattern in detected}
@@ -323,6 +339,20 @@ def build_feature_vector(
     values["pattern_dominant_direction"] = (
         _direction_code(dominant.direction) if dominant is not None else 0.0
     )
+
+    detected_structures = latest_by_kind(structures or [])
+    for kind in StructureKind:
+        structure = detected_structures.get(kind)
+        if structure is None:
+            values[f"structure_{kind.value.lower()}"] = 0.0
+        elif structure.direction is None:
+            # Estrutura neutra (compressao/expansao/range): presenca vale 1,
+            # porque ela diz "como", nao "para onde".
+            values[f"structure_{kind.value.lower()}"] = 1.0
+        else:
+            values[f"structure_{kind.value.lower()}"] = _direction_code(
+                structure.direction
+            )
 
     for column in _INDICATOR_FEATURES:
         values[f"indicator_{column}"] = _indicator_value(features, column)

@@ -125,6 +125,18 @@ class ApexFlowDecisionRepository:
         record.closed_at = closed_at or datetime.now(tz=None)
         self._session.flush()
 
+    def attach_live_trade(
+        self, record: ApexFlowDecisionRecord, live_trade_id: int
+    ) -> None:
+        """Liga a decisao a operacao que ela originou.
+
+        Feito DEPOIS do envio da ordem, porque so ai existe um `live_trade_id`
+        — a decisao e gravada antes, para que uma falha no envio nao apague o
+        registro de que o motor decidiu operar.
+        """
+        record.live_trade_id = live_trade_id
+        self._session.flush()
+
     def get_by_live_trade(self, live_trade_id: int) -> ApexFlowDecisionRecord | None:
         stmt = select(ApexFlowDecisionRecord).where(
             ApexFlowDecisionRecord.live_trade_id == live_trade_id

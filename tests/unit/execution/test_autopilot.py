@@ -283,3 +283,118 @@ def test_status_reports_the_symbol_and_stays_fresh(db_session) -> None:
     assert status.broker_symbol == SYMBOL
     assert status.enabled
     assert status.is_fresh()
+
+
+# --- Limites do dia e gerenciamento da posicao (fase de fechamento) --------
+
+
+def test_daily_profit_target_stops_new_entries(db_session) -> None:
+    """Bater a meta de lucro encerra o dia — nao so a perda."""
+    from decimal import Decimal
+
+    from app.apexflow.config import ApexFlowConfig, save_apexflow_config
+    from app.database.repositories.live_trade_repository import LiveTradeRepository
+    from app.execution.order_state import OrderState
+
+    symbol_id = seed_full_market(db_session)
+    enable_demo(db_session)
+    save_apexflow_config(db_session, ApexFlowConfig(daily_profit_target_pct=1.0))
+
+    # Um trade fechado hoje com lucro acima da meta (1% de 10.000 = 100).
+    trade = LiveTradeRepository(db_session).create(
+        symbol_id=symbol_id,
+        timeframe="M5",
+        strategy_name="autopilot",
+        model_version="test",
+        signal_id="sig-profit-target",
+        direction="LONG",
+        order_state=OrderState.POSITION_OPEN,
+        signal_time=NOW.replace(tzinfo=None),
+        entry_time=NOW.replace(tzinfo=None),
+        entry_price=Decimal("1.1000"),
+        stop_loss=Decimal("1.0980"),
+    )
+    LiveTradeRepository(db_session).close_position(
+        trade,
+        exit_time=NOW.replace(tzinfo=None),
+        exit_price=Decimal("1.1040"),
+        net_pnl=Decimal("250.00"),
+    )
+    db_session.flush()
+
+    result, status = run(db_session)
+
+    assert result.phase == AutopilotPhase.STANDING_ASIDE
+    assert status.halt_reason == "DAILY_PROFIT"
+    assert status.halt_detail
+    assert result.blocking_error is None
+
+
+def test_drawdown_and_equity_telemetry_is_published(db_session) -> None:
+    seed_full_market(db_session)
+    enable_demo(db_session)
+    _, status = run(db_session)
+    assert status.equity is not None
+    assert status.peak_equity is not None
+    assert status.drawdown_pct is not None
+    assert status.peak_equity_day == NOW.date().isoformat()
+
+
+def test_open_position_is_managed_before_anything_else(db_session) -> None:
+    """Trailing/break-even sao avaliados a cada ciclo, com a ordem de
+    modificacao chegando ao MetaTrader quando ha lucro suficiente."""
+    from decimal import Decimal
+
+    from app.apexflow.config import ApexFlowConfig, save_apexflow_config
+    from app.database.repositories.live_trade_repository import LiveTradeRepository
+    from app.execution.autopilot import run_autopilot_cycle
+    from app.execution.order_state import OrderState
+    from tests.fixtures.fake_mt5_client import make_order_send_result, make_position
+    from tests.unit.execution.test_autopilot_status import publisher_for
+
+    symbol_id = seed_full_market(db_session)
+    enable_demo(db_session)
+    save_apexflow_config(
+        db_session, ApexFlowConfig(break_even_r=0.8, trailing_start_r=1.0)
+    )
+
+    ticket = 777
+    LiveTradeRepository(db_session).create(
+        symbol_id=symbol_id,
+        timeframe="M5",
+        strategy_name="autopilot",
+        model_version="test",
+        signal_id="sig-managed",
+        direction="LONG",
+        order_state=OrderState.POSITION_OPEN,
+        signal_time=NOW.replace(tzinfo=None),
+        entry_time=NOW.replace(tzinfo=None),
+        entry_price=Decimal("1.1000"),
+        stop_loss=Decimal("1.0980"),
+        take_profit=Decimal("1.1060"),
+        volume=Decimal("0.10"),
+        mt5_position_ticket=ticket,
+    )
+    db_session.flush()
+
+    client = make_client()
+    # 2R de lucro: o trailing deve agir.
+    client.positions_get_result = (
+        make_position(ticket=ticket, symbol=SYMBOL, price_current=1.1040),
+    )
+    client.order_send_result = make_order_send_result()
+
+    run_autopilot_cycle(
+        db_session,
+        client,
+        config=TradingAutomationConfig(enabled=True, symbol=SYMBOL),
+        account=DEMO_ACCOUNT,
+        publisher=publisher_for(db_session),
+        available_symbols=[SYMBOL],
+        now=NOW,
+    )
+
+    # A unica ordem enviada foi a MODIFICACAO de stop (nunca uma entrada:
+    # a posicao aberta ocupa a vaga).
+    assert client.order_send_calls
+    assert all("position" in call for call in client.order_send_calls)

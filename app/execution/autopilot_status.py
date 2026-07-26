@@ -139,8 +139,21 @@ class AutopilotStatus:
     trend: str = ""
     volatility: str = ""
     open_position: str = ""
+    stop_management: str = ""
+    """Ultimo resultado do gerenciamento de stop (trailing/break-even)."""
+
     trades_today: int = 0
     pnl_today: float = 0.0
+    equity: float | None = None
+    peak_equity: float | None = None
+    peak_equity_day: str = ""
+    """Dia (UTC) a que o pico se refere. O drawdown medido e INTRADIARIO:
+    sem esta data, um pico de semanas atras bloquearia o robo para sempre."""
+
+    drawdown_pct: float | None = None
+    latency_seconds: float | None = None
+    halt_reason: str = ""
+    halt_detail: str = ""
     cycles: int = 0
     last_cycle_at: str | None = None
     updated_at: str | None = None
@@ -168,6 +181,10 @@ class AutopilotStatus:
     @property
     def is_working(self) -> bool:
         return self.enabled and self.phase_enum in WORKING_PHASES
+
+    @property
+    def is_halted(self) -> bool:
+        return bool(self.halt_reason) and self.halt_reason != "NONE"
 
     def is_fresh(self, *, now: datetime | None = None) -> bool:
         """`False` quando o worker parou de publicar — o dashboard mostra o
@@ -265,8 +282,16 @@ def load_autopilot_status(session: Session) -> AutopilotStatus:
         trend=_clip(data.get("trend", ""), 16),
         volatility=_clip(data.get("volatility", ""), 16),
         open_position=_clip(data.get("open_position", "")),
+        stop_management=_clip(data.get("stop_management", "")),
         trades_today=int(_optional_float(data.get("trades_today")) or 0),
         pnl_today=_optional_float(data.get("pnl_today")) or 0.0,
+        equity=_optional_float(data.get("equity")),
+        peak_equity=_optional_float(data.get("peak_equity")),
+        peak_equity_day=_clip(data.get("peak_equity_day", ""), 16),
+        drawdown_pct=_optional_float(data.get("drawdown_pct")),
+        latency_seconds=_optional_float(data.get("latency_seconds")),
+        halt_reason=_clip(data.get("halt_reason", ""), 32),
+        halt_detail=_clip(data.get("halt_detail", "")),
         cycles=int(_optional_float(data.get("cycles")) or 0),
         last_cycle_at=data.get("last_cycle_at") or None,
         updated_at=data.get("updated_at") or None,

@@ -41,6 +41,7 @@ from app.apexflow.mtf import (
     ensure_entry_timeframe,
 )
 from app.apexflow.spread import SpreadReading, read_spread
+from app.apexflow.structures import ChartStructure, detect_structures
 from app.apexflow.tick_flow import TickFlowMetrics, compute_tick_flow
 from app.apexflow.volatility import VolatilityReading, read_volatility
 from app.database.repositories.candle_repository import CandleRepository
@@ -85,7 +86,8 @@ class ApexFlowAnalysis:
     session: SymbolSessionState
     volume: VolumeReading
     patterns: tuple[CandlestickPattern, ...]
-    regime: MarketRegime | None
+    structures: tuple[ChartStructure, ...] = ()
+    regime: MarketRegime | None = None
     candles: tuple = ()
     """Candles do timeframe de entrada, na ordem em que foram analisadas.
     Viajam junto para que o adaptador de execucao possa localizar niveis de
@@ -212,6 +214,11 @@ def analyze(
     )
 
     patterns = detect_patterns(entry_candles) if entry_candles else []
+    structures = (
+        detect_structures(entry_candles, entry_features)
+        if entry_candles and not entry_features.empty
+        else []
+    )
     vector = build_feature_vector(
         symbol=symbol,
         timeframe=timeframe.value,
@@ -226,6 +233,7 @@ def analyze(
         volume=volume,
         context=context,
         patterns=patterns,
+        structures=structures,
         now=resolved_now,
     )
 
@@ -272,6 +280,7 @@ def analyze(
         session=session_state,
         volume=volume,
         patterns=tuple(patterns),
+        structures=tuple(structures),
         regime=regime,
         candles=tuple(entry_candles),
         warnings=tuple(warnings),

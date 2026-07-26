@@ -43,6 +43,14 @@ class LiveTrade(Base, TimestampMixin):
     entry_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     entry_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
     stop_loss: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    """Stop ATUAL — reescrito pelo trailing stop / break-even."""
+
+    initial_stop_loss: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 8), nullable=True
+    )
+    """Stop com que a operação NASCEU (migration 0010), preservado para que
+    1R continue calculável depois do trailing mover `stop_loss`."""
+
     take_profit: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
     volume: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
 

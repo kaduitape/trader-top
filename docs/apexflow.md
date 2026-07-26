@@ -156,6 +156,28 @@ Três propriedades obrigatórias, todas testadas:
    um valor neutro no vetor numérico, com `missing_mask()` indicando quais
    foram preenchidas. Nunca se confunde "zero" com "não sei".
 
+## 4b. Estruturas de gráfico
+
+`app/apexflow/structures.py` completa o Price Action Engine com o que não
+cabe em uma ou três velas — `price_action.py` continua responsável pelos
+padrões de candle (pin bar, engolfo, doji, inside/outside bar, fakey, falso
+rompimento):
+
+| Estrutura | Critério |
+|-----------|----------|
+| Topo / fundo duplo | dois extremos dentro de 0,35 ATR **com** recuo ≥ 0,8 ATR entre eles |
+| Compressão / expansão | amplitude média das últimas 20 barras ≤ 0,70× ou ≥ 1,40× a das 20 anteriores |
+| Acumulação / distribuição | faixa estreita **com volume alto** — perto do fundo é acumulação, perto do topo é distribuição |
+| Range | largura ≤ 2,5 ATR com ≥ 2 toques em cada lado |
+| Micro tendência | movimento ininterrupto ≥ 0,5 ATR nas últimas 5 barras |
+| Micro pullback | micro tendência com a última barra contra, **sem** desfazer o movimento |
+
+Duas distinções fazem o trabalho aqui: faixa estreita com volume baixo é só
+**compressão** (falta de interesse), enquanto com volume alto é **absorção**;
+e um recuo que desfaz todo o movimento é **reversão**, não pullback.
+Tolerâncias em ATR, nunca em pontos fixos — o mesmo critério serve para
+EURUSD e XAUUSD.
+
 ## 7. Risk Manager
 
 O que o módulo **nunca** faz, por arquitetura — não existe parâmetro que
@@ -177,9 +199,22 @@ Duas regras invioláveis, ambas testadas:
    recusada mesmo que a fórmula a proponha.
 2. **Break-even antes de trailing.**
 
-Todas as funções são puras: recebem números, devolvem uma **intenção**. Quem
-executa é a camada de execução — assim o gerenciamento é testável sem
-terminal.
+As funções de cálculo são puras: recebem números, devolvem uma **intenção**.
+Quem executa é `app/execution/position_manager.py`, que envia
+`modify_position` (`TRADE_ACTION_SLTP` — altera só os níveis de proteção,
+nunca abre nem fecha) e persiste o novo stop **somente depois** da corretora
+aceitar: gravar um nível recusado faria o sistema acreditar em uma proteção
+que não existe.
+
+O gerenciamento roda **antes de tudo** em cada ciclo, e continua rodando
+mesmo quando o dia já está fechado para novas entradas — uma posição aberta
+precisa seguir protegida. Os limites do dia (perda, lucro, perdas seguidas,
+drawdown intradiário desde o pico) são avaliados em seguida e, quando
+disparam, encerram o dia para entradas novas sem tocar na posição aberta.
+
+`live_trades.initial_stop_loss` (migration 0010) preserva o risco com que a
+operação nasceu, porque o trailing reescreve `stop_loss` — sem ele, 1R
+ficaria incalculável exatamente nas operações que deram certo.
 
 ## 8. Learning Engine
 
@@ -192,6 +227,13 @@ Cada linha guarda o `feature_vector` completo em JSON junto de
 `feature_version`, permitindo reavaliar um modelo novo contra exatamente os
 sensores que o motor tinha naquele instante.
 
+O loop é **fechado**: quando a decisão vira ordem, `attach_live_trade` liga
+as duas; quando a reconciliação detecta o fechamento, `record_trade_result`
+anexa resultado e R realizado (calculado sobre `initial_stop_loss`). É isso
+que faz win rate, profit factor e expectância saírem de "amostra
+insuficiente" — sem esse fechamento as métricas ficariam em zero para
+sempre.
+
 Métricas agregadas (win rate, profit factor, expectância) retornam `None` —
 não zero — abaixo de `MIN_TRADES_FOR_STATISTICS`. Um profit factor calculado
 sobre duas operações é uma mentira mais perigosa que a ausência do número.
@@ -201,8 +243,10 @@ sobre duas operações é uma mentira mais perigosa que a ausência do número.
 ### Dashboard
 
 `/dashboard/apexflow` — probabilidades ao vivo (compra/venda/abstenção),
-ticks/s, ATR, spread, alinhamento MTF, desempenho registrado e as últimas
-decisões. Atualiza sozinho a cada 5 segundos.
+ticks/s, ATR, spread, alinhamento MTF, **latência do feed**, **drawdown do
+dia**, resultado do dia, estado do robô, desempenho registrado e as últimas
+decisões. Mostra também o motivo da parada quando um limite do dia dispara e
+o último movimento de stop aplicado. Atualiza sozinho a cada 5 segundos.
 
 Marcar **"Usar o ApexFlow AI para decidir"** troca o cérebro do piloto
 automático. **Isso não liga o robô**: ligar continua exigindo os portões de
@@ -239,3 +283,10 @@ conta demo obrigatória, auditoria. O cérebro muda; os limites, não.
 - **O `ScorecardModel` não foi validado em produção.** Ele é um baseline
   determinístico e explicável, não um modelo treinado. Qualquer alegação de
   desempenho precisa vir do `apexflow history` sobre operações reais.
+- **O feature vector está em `apexflow-2`.** Um modelo treinado sobre
+  `apexflow-1` não pode receber o vetor atual sem retreino: as colunas de
+  VWAP e das nove estruturas mudaram o tamanho do vetor.
+- **Não há benchmark de latência medido.** A arquitetura prioriza baixo
+  custo (buffer circular O(1), uma passada por métrica, nenhuma consulta
+  por tick), e a latência do feed é medida e exibida — mas não existe
+  número de referência de latência de decisão fim a fim.

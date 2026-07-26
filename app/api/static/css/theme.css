@@ -2428,3 +2428,24 @@ details summary {
         grid-template-columns: 1fr;
     }
 }
+
+.tp-apex-runtime {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.7rem 0.9rem;
+    margin-top: 1rem;
+    border: 1px solid rgba(250, 204, 21, 0.35);
+    border-radius: var(--tp-radius-sm);
+    background: rgba(250, 204, 21, 0.08);
+    font-size: 0.8rem;
+}
+
+.tp-apex-runtime i { color: #facc15; }
+
+.tp-apex-runtime.is-info {
+    border-color: rgba(104, 232, 154, 0.32);
+    background: rgba(104, 232, 154, 0.08);
+}
+
+.tp-apex-runtime.is-info i { color: #68e89a; }

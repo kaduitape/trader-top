@@ -1,6 +1,6 @@
-"""Valida as migrations 0008 (system_settings.value -> TEXT) e 0009
-(apexflow_decisions), encadeadas sobre 0001-0007, isoladas de
-`app.core.config` (engine sqlite propria)."""
+"""Valida as migrations 0008 (system_settings.value -> TEXT), 0009
+(apexflow_decisions) e 0010 (live_trades.initial_stop_loss), encadeadas
+sobre 0001-0007 e isoladas de `app.core.config` (engine sqlite propria)."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ _ALL_MIGRATIONS = (
     "0007_ticks_microsecond_precision.py",
     "0008_system_settings_text_value.py",
     "0009_apexflow_decisions.py",
+    "0010_live_trades_initial_stop.py",
 )
 
 
@@ -57,13 +58,35 @@ def test_migration_chain_applies_and_keeps_system_settings() -> None:
 def test_apexflow_decisions_downgrade_removes_only_its_table() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     with engine.connect() as connection:
-        migrations = _upgraded_connection(connection)
+        _upgraded_connection(connection)
+        module = _load_migration_module("0009_apexflow_decisions.py")
         migration_ctx = MigrationContext.configure(connection)
         with Operations.context(migration_ctx):
-            migrations[-1].downgrade()
+            # A 0010 mexe em live_trades e precisa sair antes da 0009.
+            _load_migration_module("0010_live_trades_initial_stop.py").downgrade()
+            module.downgrade()
         table_names = set(inspect(connection).get_table_names())
         assert "apexflow_decisions" not in table_names
         assert {"symbols", "live_trades", "system_settings"} <= table_names
+
+
+def test_initial_stop_loss_column_is_created() -> None:
+    """Sem esta coluna o R-multiplo das operacoes com trailing ficaria
+    incalculavel — o trailing reescreve `stop_loss`."""
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    with engine.connect() as connection:
+        _upgraded_connection(connection)
+        columns = {
+            column["name"] for column in inspect(connection).get_columns("live_trades")
+        }
+        assert "initial_stop_loss" in columns
+        assert "stop_loss" in columns
+
+
+def test_initial_stop_loss_revision_is_chained_after_0009() -> None:
+    module = _load_migration_module("0010_live_trades_initial_stop.py")
+    assert module.revision == "0010"
+    assert module.down_revision == "0009"
 
 
 def test_apexflow_decisions_revision_is_chained_after_0008() -> None:

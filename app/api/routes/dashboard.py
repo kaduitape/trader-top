@@ -815,6 +815,10 @@ def _apexflow_payload(db: Session) -> dict:
     performance = repository.performance(symbol_id=symbol_id)
     recent = repository.list_recent(symbol_id=symbol_id, limit=15)
     latest = recent[0] if recent else None
+    # Latencia, drawdown e estado de parada vivem no status ao vivo (o worker
+    # os publica a cada ciclo), nao na tabela de decisoes: eles descrevem o
+    # ROBO agora, nao uma decisao passada.
+    status = load_autopilot_status(db)
 
     return {
         "apexflow_config": config,
@@ -822,6 +826,7 @@ def _apexflow_payload(db: Session) -> dict:
         "performance": performance,
         "recent_decisions": recent,
         "latest": latest,
+        "status": status,
         "engine_active": automation.enabled and automation.engine == ENGINE_APEXFLOW,
     }
 
@@ -830,6 +835,7 @@ def _apexflow_json(payload: dict) -> dict:
     latest = payload["latest"]
     performance = payload["performance"]
     config = payload["apexflow_config"]
+    status: AutopilotStatus = payload["status"]
 
     def optional(value) -> float | None:
         return None if value is None else float(value)
@@ -862,6 +868,17 @@ def _apexflow_json(payload: dict) -> dict:
         "profit_factor": performance.profit_factor,
         "expectancy": performance.expectancy,
         "net_pnl": performance.net_pnl,
+        "latency_seconds": status.latency_seconds,
+        "drawdown_pct": status.drawdown_pct,
+        "equity": status.equity,
+        "pnl_today": status.pnl_today,
+        "trades_today": status.trades_today,
+        "halt_reason": status.halt_reason,
+        "halt_detail": status.halt_detail,
+        "stop_management": status.stop_management,
+        "robot_phase": status.phase_label,
+        "robot_working": status.enabled and status.is_fresh() and status.is_working,
+        "session_label": status.session_label,
         "decisions": [
             {
                 "decided_at": record.decided_at.isoformat(),

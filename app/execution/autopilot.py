@@ -32,12 +32,16 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from app.apexflow.config import load_apexflow_config
+from app.apexflow.config import ApexFlowConfig, load_apexflow_config
 from app.apexflow.engine import analyze as apexflow_analyze
-from app.apexflow.journal import record_decision
+from app.apexflow.journal import record_decision, record_trade_result
+from app.apexflow.risk import TradingHalt, evaluate_trading_halt
 from app.apexflow.strategy import ApexFlowStrategy
 from app.core.config import Settings, get_settings
 from app.core.enums import SystemMode
+from app.database.repositories.apexflow_decision_repository import (
+    ApexFlowDecisionRepository,
+)
 from app.database.repositories.candle_repository import CandleRepository
 from app.database.repositories.live_trade_repository import LiveTradeRepository
 from app.database.repositories.symbol_repository import SymbolRepository
@@ -62,6 +66,7 @@ from app.execution.engine import (
     SignalRejected,
 )
 from app.execution.playbook import PlaybookDecision, select_playbook
+from app.execution.position_manager import StopMoveOutcome, manage_open_position
 from app.market.catalog import resolve_broker_symbol
 from app.market.features import build_candle_features, required_lookback_bars
 from app.market.regimes import MarketRegime, classify_latest_regime
@@ -137,9 +142,17 @@ def _describe_event(event: DemoExecutionEvent) -> tuple[str, ActivityLevel]:
     return (str(event), ActivityLevel.INFO)
 
 
-def _daily_counters(session: Session, symbol_id: int) -> tuple[int, float]:
+def _daily_counters(
+    session: Session, symbol_id: int, *, now: datetime
+) -> tuple[int, float]:
+    """Operacoes e resultado do dia corrente.
+
+    O inicio do dia vem do `now` do CICLO, nao de `datetime.now()`: o ciclo
+    inteiro precisa raciocinar sobre um unico instante, senao a leitura de
+    mercado e os contadores de risco podem discordar sobre que dia e hoje.
+    """
     repository = LiveTradeRepository(session)
-    start_of_day = datetime.now(UTC).replace(
+    start_of_day = now.astimezone(UTC).replace(
         hour=0, minute=0, second=0, microsecond=0, tzinfo=None
     )
     trades = repository.count_entries_since(
@@ -172,6 +185,135 @@ def _classify_regime(candles: list) -> MarketRegime | None:
         return classify_latest_regime(features)
     except ValueError:
         return None
+
+
+def _record_closed_outcomes(
+    session: Session, events: tuple[DemoExecutionEvent, ...]
+) -> int:
+    """Anexa o resultado ao Learning Engine para cada posicao fechada.
+
+    Fecha o ciclo do aprendizado: sem isto as decisoes ficariam gravadas
+    para sempre sem resultado, e win rate / profit factor / expectancia
+    nunca sairiam de "amostra insuficiente".
+
+    Vale para os DOIS motores: uma operacao aberta pelo seletor de
+    operacional simplesmente nao tem decisao ApexFlow ligada, e
+    `record_trade_result` devolve `False` sem erro.
+    """
+    repository = LiveTradeRepository(session)
+    recorded = 0
+    for event in events:
+        if not isinstance(event, PositionClosed):
+            continue
+        trade = repository.get_by_id(event.trade_id)
+        if trade is not None and record_trade_result(session, trade):
+            recorded += 1
+    return recorded
+
+
+def _manage_position(
+    session: Session,
+    client: MT5ClientProtocol,
+    publisher: AutopilotStatusPublisher,
+    *,
+    symbol_id: int,
+    broker_symbol: str,
+    account: AccountSnapshot,
+    risk_config: ApexFlowConfig,
+) -> str:
+    """Aplica trailing stop / break-even na posicao aberta, se houver.
+
+    Roda em TODO ciclo e antes de qualquer outra coisa: uma posicao aberta
+    precisa continuar sendo protegida mesmo quando o dia ja esta fechado
+    para novas entradas. Devolve a mensagem para o status; so registra
+    atividade quando algo de fato mudou, para nao poluir o feed com
+    "ainda nao ha lucro suficiente" a cada 15 segundos.
+    """
+    trade = LiveTradeRepository(session).get_active_position(
+        symbol_id, None, AUTOPILOT_STRATEGY_NAME
+    )
+    if trade is None:
+        return ""
+
+    report = manage_open_position(
+        session,
+        client,
+        trade,
+        account=account,
+        symbol=broker_symbol,
+        config=risk_config,
+    )
+    if report.outcome == StopMoveOutcome.APPLIED:
+        publisher.note(report.message, level=ActivityLevel.GOOD)
+    elif report.outcome == StopMoveOutcome.REJECTED:
+        publisher.note(report.message, level=ActivityLevel.WARN)
+    return report.message
+
+
+def _consecutive_losses(session: Session, symbol_id: int) -> int:
+    losses = 0
+    for trade in LiveTradeRepository(session).get_recent_closed(
+        symbol_id, None, AUTOPILOT_STRATEGY_NAME, limit=20
+    ):
+        if trade.net_pnl is not None and float(trade.net_pnl) < 0:
+            losses += 1
+        else:
+            break
+    return losses
+
+
+def _evaluate_halt(
+    session: Session,
+    publisher: AutopilotStatusPublisher,
+    *,
+    symbol_id: int,
+    account: AccountSnapshot,
+    pnl_today: float,
+    risk_config: ApexFlowConfig,
+    max_daily_loss_pct: float,
+    max_consecutive_losses: int,
+    now: datetime,
+) -> tuple[TradingHalt, dict]:
+    """Decide se o dia acabou para o robo e devolve a telemetria de risco.
+
+    O saldo do INICIO do dia e derivado de `balance - pnl_do_dia`: o saldo
+    da conta move-se exatamente pelo resultado realizado, entao essa e a
+    reconstrucao correta sem precisar de um snapshot diario separado.
+
+    O pico de equity e INTRADIARIO e guardado no proprio status. Sem a data
+    junto, um pico de semanas atras manteria o robo bloqueado para sempre
+    por um drawdown que ja foi recuperado.
+    """
+    status = publisher.load()
+    today = now.date().isoformat()
+    previous_peak = (
+        status.peak_equity
+        if status.peak_equity is not None and status.peak_equity_day == today
+        else None
+    )
+    peak_equity = max(previous_peak, account.equity) if previous_peak else account.equity
+
+    halt = evaluate_trading_halt(
+        day_start_balance=account.balance - pnl_today,
+        current_equity=account.equity,
+        daily_pnl=pnl_today,
+        consecutive_losses=_consecutive_losses(session, symbol_id),
+        max_consecutive_losses=max_consecutive_losses,
+        peak_equity=peak_equity,
+        config=risk_config,
+        max_daily_loss_pct=max_daily_loss_pct,
+    )
+    drawdown_pct = (
+        (peak_equity - account.equity) / peak_equity * 100 if peak_equity > 0 else None
+    )
+    return halt, {
+        "equity": round(account.equity, 2),
+        "peak_equity": round(peak_equity, 2),
+        "peak_equity_day": today,
+        "drawdown_pct": round(drawdown_pct, 2) if drawdown_pct is not None else None,
+        "halt_reason": halt.reason.value,
+        "halt_detail": halt.detail,
+    }
 
 
 def _blocked(
@@ -251,7 +393,7 @@ def _run_apexflow(
     )
     decision = analysis.decision
 
-    record_decision(
+    decision_record = record_decision(
         session,
         decision,
         analysis.vector,
@@ -273,6 +415,11 @@ def _run_apexflow(
         "analysis_recommendation": decision.action.value,
         "fit_score": round(analysis.vector.completeness * 100, 1),
         "risk_factor": 1.0,
+        "latency_seconds": (
+            round(analysis.flow.latency_seconds, 3)
+            if analysis.flow.latency_seconds is not None
+            else None
+        ),
         "reasons": tuple(decision.reasons),
         "blockers": tuple(decision.vetoes),
     }
@@ -352,7 +499,16 @@ def _run_apexflow(
         message, level = _describe_event(event)
         publisher.note(message, level=level)
 
-    trades_today, pnl_today = _daily_counters(session, symbol_row.id)
+    # A decisao passa a apontar para a operacao que ela gerou, e toda
+    # posicao fechada neste ciclo recebe o resultado no Learning Engine.
+    for event in result.events:
+        if isinstance(event, PositionOpened):
+            ApexFlowDecisionRepository(session).attach_live_trade(
+                decision_record, event.trade_id
+            )
+    _record_closed_outcomes(session, tuple(result.events))
+
+    trades_today, pnl_today = _daily_counters(session, symbol_row.id, now=now)
     open_position = _open_position_summary(session, symbol_row.id)
     opened = any(isinstance(event, PositionOpened) for event in result.events)
     phase = AutopilotPhase.POSITION_OPEN if (opened or open_position) else (
@@ -452,8 +608,58 @@ def run_autopilot_cycle(
         )
 
     candle_repository = CandleRepository(session)
-    trades_today, pnl_today = _daily_counters(session, symbol.id)
+    risk_config = load_apexflow_config(session)
+
+    # 1) A posicao aberta e cuidada ANTES de qualquer coisa: trailing stop e
+    # break-even nao podem esperar pela leitura de mercado, e continuam
+    # valendo mesmo quando o dia ja esta fechado para novas entradas.
+    stop_report = _manage_position(
+        session,
+        client,
+        publisher,
+        symbol_id=symbol.id,
+        broker_symbol=broker_symbol,
+        account=account,
+        risk_config=risk_config,
+    )
+
+    trades_today, pnl_today = _daily_counters(session, symbol.id, now=resolved_now)
     open_position = _open_position_summary(session, symbol.id)
+
+    # 2) O dia pode estar encerrado por perda, por LUCRO, por perdas
+    # seguidas ou por drawdown. Nesse caso nenhuma entrada nova e avaliada.
+    halt, risk_fields = _evaluate_halt(
+        session,
+        publisher,
+        symbol_id=symbol.id,
+        account=account,
+        pnl_today=pnl_today,
+        risk_config=risk_config,
+        max_daily_loss_pct=config.max_daily_loss_pct,
+        max_consecutive_losses=config.max_consecutive_losses,
+        now=resolved_now,
+    )
+    if halt.is_halted:
+        publisher.publish(
+            AutopilotPhase.STANDING_ASIDE,
+            f"{halt.label}: nenhuma entrada nova hoje.",
+            detail=halt.detail,
+            level=ActivityLevel.WARN,
+            enabled=True,
+            symbol=config.symbol,
+            broker_symbol=broker_symbol,
+            trades_today=trades_today,
+            pnl_today=pnl_today,
+            open_position=open_position,
+            stop_management=stop_report,
+            last_error="",
+            **risk_fields,
+        )
+        return AutopilotCycleResult(
+            ran=True,
+            phase=AutopilotPhase.STANDING_ASIDE,
+            message=f"{halt.label}: {halt.detail}",
+        )
 
     publisher.publish(
         AutopilotPhase.READING_MARKET,
@@ -464,7 +670,9 @@ def run_autopilot_cycle(
         trades_today=trades_today,
         pnl_today=pnl_today,
         open_position=open_position,
+        stop_management=stop_report,
         last_error="",
+        **risk_fields,
     )
 
     session_state = evaluate_symbol_session(broker_symbol, now=resolved_now)
@@ -646,13 +854,14 @@ def run_autopilot_cycle(
         scope_across_timeframes=True,
     )
     result = engine.step(execution_candles)
+    _record_closed_outcomes(session, tuple(result.events))
 
     analysis_fields = {
         "analysis_score": round(report.score.total_score, 1),
         "analysis_recommendation": report.recommendation,
     }
 
-    trades_today, pnl_today = _daily_counters(session, symbol.id)
+    trades_today, pnl_today = _daily_counters(session, symbol.id, now=resolved_now)
     open_position = _open_position_summary(session, symbol.id)
 
     for event in result.events:
