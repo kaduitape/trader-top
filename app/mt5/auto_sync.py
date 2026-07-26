@@ -27,7 +27,16 @@ from app.database.repositories.system_setting_repository import get_current_mode
 from app.database.repositories.tick_repository import TickRepository
 from app.database.session import get_session_factory
 from app.execution.analysis_strategy import AnalysisReportStrategy
-from app.execution.automation_settings import load_trading_automation_config
+from app.execution.automation_settings import (
+    TradingAutomationConfig,
+    load_trading_automation_config,
+)
+from app.execution.autopilot import EXECUTION_TIMEFRAMES, run_autopilot_cycle
+from app.execution.autopilot_status import (
+    ActivityLevel,
+    AutopilotPhase,
+    AutopilotStatusPublisher,
+)
 from app.execution.engine import DemoExecutionEngine
 from app.market.catalog import resolve_broker_symbol
 from app.market.data_quality import check_candles, check_ticks
@@ -313,6 +322,91 @@ class MT5AutoSyncWorker:
         error = "; ".join(errors)[:300] if errors else None
         return ready, candle_total, tick_total, error
 
+    def _ensure_autopilot_off(self) -> None:
+        """Deixa o status ao vivo coerente quando a automacao esta desligada.
+
+        Sem isso, o painel continuaria exibindo a ultima fase publicada
+        (ex.: "aguardando o gatilho") depois que o operador desligou o robo
+        — exatamente o tipo de status que mente. So escreve quando ha algo
+        a corrigir, para nao gerar escrita a cada ciclo ocioso.
+        """
+        publisher = AutopilotStatusPublisher(get_session_factory(), worker_id=self._worker_id)
+        try:
+            status = publisher.load()
+            if status.enabled or status.phase != AutopilotPhase.OFF.value:
+                publisher.turn_off()
+        except Exception:
+            logger.exception("autopilot_status_turn_off_failed")
+
+    def _run_autopilot_cycle(
+        self,
+        connection: MT5Connection,
+        config: TradingAutomationConfig,
+    ) -> str | None:
+        """Delega o ciclo ao piloto automatico, publicando o status ao vivo.
+
+        O piloto escolhe o operacional, o timeframe e o score minimo a
+        partir da sessao e do volume do par; aqui so ficam a conexao, a
+        fronteira da transacao e a traducao do resultado para o status do
+        conector.
+        """
+        publisher = AutopilotStatusPublisher(get_session_factory(), worker_id=self._worker_id)
+        session = get_session_factory()()
+        try:
+            sync_config = load_sync_config(session)
+            account = fetch_account_snapshot(connection.client)
+            if account is None:
+                publisher.publish(
+                    AutopilotPhase.BLOCKED,
+                    "Pausado: a conta MT5 nao respondeu.",
+                    level=ActivityLevel.ERROR,
+                    enabled=True,
+                )
+                return "Automacao pausada: a conta MT5 nao respondeu."
+
+            result = run_autopilot_cycle(
+                session,
+                connection.client,
+                config=config,
+                account=account,
+                publisher=publisher,
+                available_symbols=list_symbols(connection.client),
+                # So os timeframes de execucao que o plano de sincronizacao
+                # de fato coleta — o piloto nunca escolhe um timeframe que
+                # ficaria sem candles.
+                available_timeframes=tuple(
+                    code for code in EXECUTION_TIMEFRAMES if code in sync_config.timeframes
+                ),
+            )
+            session.commit()
+            if result.events:
+                logger.info(
+                    "autopilot_events",
+                    extra={
+                        "symbol": config.symbol,
+                        "phase": result.phase.value,
+                        "event_count": len(result.events),
+                    },
+                )
+            return result.blocking_error
+        except Exception as exc:
+            session.rollback()
+            logger.exception("autopilot_cycle_failed")
+            message = f"Falha no piloto automatico: {exc}"[:300]
+            try:
+                publisher.publish(
+                    AutopilotPhase.ERROR,
+                    message,
+                    level=ActivityLevel.ERROR,
+                    enabled=True,
+                    last_error=message,
+                )
+            except Exception:
+                logger.exception("autopilot_status_publish_failed")
+            return message
+        finally:
+            session.close()
+
     def _run_trading_cycle(
         self,
         connection: MT5Connection,
@@ -326,8 +420,17 @@ class MT5AutoSyncWorker:
         session = get_session_factory()()
         try:
             config = load_trading_automation_config(session)
-            if not config.enabled:
-                return None
+        finally:
+            session.close()
+
+        if not config.enabled:
+            self._ensure_autopilot_off()
+            return None
+        if config.autopilot:
+            return self._run_autopilot_cycle(connection, config)
+
+        session = get_session_factory()()
+        try:
             if get_current_mode(session) != SystemMode.DEMO:
                 return "Automacao pausada: o modo operacional nao esta em DEMO."
 

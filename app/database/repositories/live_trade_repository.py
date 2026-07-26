@@ -1,7 +1,14 @@
 """Repositório de `LiveTrade` (Fase 11). Garante no máximo uma posição
 ativa (`POSITION_OPEN` ou `RECONCILING`) por (`symbol_id`, `timeframe`,
 `strategy_name`) a nível de aplicação — mesma razão de
-`PaperTradeRepository` (Fase 10)."""
+`PaperTradeRepository` (Fase 10).
+
+Todas as consultas de estado aceitam `timeframe=None`, que significa
+"todos os timeframes desta estratégia neste símbolo". Isso existe para o
+piloto automático (`app.execution.autopilot`), que troca de timeframe
+conforme o horário/volume: sem esse escopo mais amplo, mudar de M5 para
+M15 esconderia a posição aberta e os contadores do dia, e os limites de
+risco seriam contornados sem querer."""
 
 from __future__ import annotations
 
@@ -22,16 +29,32 @@ class LiveTradeRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def get_active_position(
-        self, symbol_id: int, timeframe: str, strategy_name: str
-    ) -> LiveTrade | None:
-        stmt = select(LiveTrade).where(
+    @staticmethod
+    def _scope(symbol_id: int, timeframe: str | None, strategy_name: str) -> list:
+        """Filtros comuns. `timeframe=None` abrange todos os timeframes."""
+        conditions = [
             LiveTrade.symbol_id == symbol_id,
-            LiveTrade.timeframe == timeframe,
             LiveTrade.strategy_name == strategy_name,
-            LiveTrade.order_state.in_(_ACTIVE_STATES),
+        ]
+        if timeframe is not None:
+            conditions.append(LiveTrade.timeframe == timeframe)
+        return conditions
+
+    def get_active_position(
+        self, symbol_id: int, timeframe: str | None, strategy_name: str
+    ) -> LiveTrade | None:
+        stmt = (
+            select(LiveTrade)
+            .where(
+                *self._scope(symbol_id, timeframe, strategy_name),
+                LiveTrade.order_state.in_(_ACTIVE_STATES),
+            )
+            .order_by(LiveTrade.signal_time.desc())
         )
-        return self._session.execute(stmt).scalar_one_or_none()
+        return self._session.execute(stmt).scalars().first()
+
+    def get_by_id(self, trade_id: int) -> LiveTrade | None:
+        return self._session.get(LiveTrade, trade_id)
 
     def create(
         self,
@@ -68,6 +91,9 @@ class LiveTradeRepository:
             entry_time=entry_time,
             entry_price=entry_price,
             stop_loss=stop_loss,
+            # O trailing reescreve `stop_loss`; `initial_stop_loss` guarda o
+            # risco original, que é o que define 1R.
+            initial_stop_loss=stop_loss,
             take_profit=take_profit,
             volume=volume,
         )
@@ -89,20 +115,25 @@ class LiveTradeRepository:
         trade.net_pnl = net_pnl
         self._session.flush()
 
+    def update_stop_loss(self, trade: LiveTrade, stop_loss: Decimal) -> None:
+        """Persiste um stop já ACEITO pela corretora (trailing/break-even).
+
+        Só é chamado depois de `modify_position` confirmar — gravar um nível
+        recusado faria o sistema acreditar em uma proteção que não existe.
+        """
+        trade.stop_loss = stop_loss
+        self._session.flush()
+
     def mark_reconciling(self, trade: LiveTrade) -> None:
         trade.order_state = OrderState.RECONCILING.value
         self._session.flush()
 
     def list_recent(
-        self, symbol_id: int, timeframe: str, strategy_name: str, limit: int = 50
+        self, symbol_id: int, timeframe: str | None, strategy_name: str, limit: int = 50
     ) -> list[LiveTrade]:
         stmt = (
             select(LiveTrade)
-            .where(
-                LiveTrade.symbol_id == symbol_id,
-                LiveTrade.timeframe == timeframe,
-                LiveTrade.strategy_name == strategy_name,
-            )
+            .where(*self._scope(symbol_id, timeframe, strategy_name))
             .order_by(LiveTrade.signal_time.desc())
             .limit(limit)
         )
@@ -120,22 +151,20 @@ class LiveTradeRepository:
         return [(trade, symbol_name) for trade, symbol_name in self._session.execute(stmt)]
 
     def count_entries_since(
-        self, symbol_id: int, timeframe: str, strategy_name: str, *, since: datetime
+        self, symbol_id: int, timeframe: str | None, strategy_name: str, *, since: datetime
     ) -> int:
         """Conta posições que chegaram a abrir hoje (qualquer estado atual
         — inclusive já fechadas) — é isso que o limite diário de trades
         deve contar, não apenas as ainda abertas."""
         stmt = select(func.count()).where(
-            LiveTrade.symbol_id == symbol_id,
-            LiveTrade.timeframe == timeframe,
-            LiveTrade.strategy_name == strategy_name,
+            *self._scope(symbol_id, timeframe, strategy_name),
             LiveTrade.entry_time.isnot(None),
             LiveTrade.entry_time >= since,
         )
         return int(self._session.execute(stmt).scalar_one())
 
     def get_recent_closed(
-        self, symbol_id: int, timeframe: str, strategy_name: str, limit: int = 20
+        self, symbol_id: int, timeframe: str | None, strategy_name: str, limit: int = 20
     ) -> list[LiveTrade]:
         """Mais recentes primeiro — usado para contar perdas consecutivas,
         que não são limitadas ao dia corrente (uma sequência de perdas de
@@ -143,9 +172,7 @@ class LiveTradeRepository:
         stmt = (
             select(LiveTrade)
             .where(
-                LiveTrade.symbol_id == symbol_id,
-                LiveTrade.timeframe == timeframe,
-                LiveTrade.strategy_name == strategy_name,
+                *self._scope(symbol_id, timeframe, strategy_name),
                 LiveTrade.order_state == OrderState.CLOSED.value,
             )
             .order_by(LiveTrade.exit_time.desc())
@@ -154,12 +181,10 @@ class LiveTradeRepository:
         return list(self._session.execute(stmt).scalars().all())
 
     def sum_net_pnl_since(
-        self, symbol_id: int, timeframe: str, strategy_name: str, *, since: datetime
+        self, symbol_id: int, timeframe: str | None, strategy_name: str, *, since: datetime
     ) -> float:
         stmt = select(func.coalesce(func.sum(LiveTrade.net_pnl), 0)).where(
-            LiveTrade.symbol_id == symbol_id,
-            LiveTrade.timeframe == timeframe,
-            LiveTrade.strategy_name == strategy_name,
+            *self._scope(symbol_id, timeframe, strategy_name),
             LiveTrade.order_state == OrderState.CLOSED.value,
             LiveTrade.exit_time >= since,
         )
@@ -167,12 +192,10 @@ class LiveTradeRepository:
         return float(result) if result is not None else 0.0
 
     def get_last_entry_time(
-        self, symbol_id: int, timeframe: str, strategy_name: str
+        self, symbol_id: int, timeframe: str | None, strategy_name: str
     ) -> datetime | None:
         stmt = select(func.max(LiveTrade.entry_time)).where(
-            LiveTrade.symbol_id == symbol_id,
-            LiveTrade.timeframe == timeframe,
-            LiveTrade.strategy_name == strategy_name,
+            *self._scope(symbol_id, timeframe, strategy_name),
             LiveTrade.entry_time.isnot(None),
         )
         return self._session.execute(stmt).scalar_one_or_none()

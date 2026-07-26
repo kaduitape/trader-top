@@ -22,12 +22,16 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+from app.apexflow.config import load_apexflow_config, save_apexflow_config
 from app.api.dependencies.auth import get_current_user_for_web
 from app.api.templates_engine import templates
 from app.core.config import get_settings
 from app.core.enums import SystemMode
 from app.core.system_mode import SystemModeError, validate_transition
 from app.database.models.user import User
+from app.database.repositories.apexflow_decision_repository import (
+    ApexFlowDecisionRepository,
+)
 from app.database.repositories.audit_log_repository import AuditLogRepository
 from app.database.repositories.candle_repository import CandleRepository
 from app.database.repositories.drift_event_repository import DriftEventRepository
@@ -42,9 +46,16 @@ from app.database.repositories.system_setting_repository import (
 from app.database.repositories.tick_repository import TickRepository
 from app.database.session import get_db
 from app.execution.automation_settings import (
+    ENGINE_APEXFLOW,
+    ENGINE_PLAYBOOK,
     TradingAutomationConfig,
     load_trading_automation_config,
     save_trading_automation_config,
+)
+from app.execution.autopilot_status import (
+    AutopilotStatus,
+    load_autopilot_status,
+    summarize_activities,
 )
 from app.market.catalog import (
     GROUP_LABELS,
@@ -698,6 +709,417 @@ def _mask_api_key(key: str) -> str:
     if len(key) <= 4:
         return "*" * len(key)
     return "*" * (len(key) - 4) + key[-4:]
+
+
+_AUTOPILOT_READY_MESSAGE = (
+    "Escolha a moeda e ligue: o robo decide o operacional pelo horario e pelo volume."
+)
+
+
+def _autopilot_payload(db: Session) -> dict:
+    """Estado do piloto para a pagina e para o polling JSON — mesma fonte,
+    para que a tela nunca discorde de si mesma entre um refresh e outro."""
+    config = load_trading_automation_config(db)
+    status = load_autopilot_status(db)
+    sync_status = load_sync_status(db)
+    worker_online = heartbeat_is_fresh(sync_status)
+    fresh = status.is_fresh()
+
+    if not config.enabled:
+        headline = "Piloto automatico desligado."
+        detail = _AUTOPILOT_READY_MESSAGE
+    elif not worker_online:
+        headline = "Ligado, mas o conector do MetaTrader esta offline."
+        detail = "Abra o terminal MT5 no Windows e mantenha o worker rodando."
+    elif not fresh:
+        headline = "Ligado, aguardando o primeiro ciclo do worker."
+        detail = (
+            "O status ao vivo aparece assim que o worker publicar — se demorar, "
+            "confira os logs do worker."
+        )
+    else:
+        headline = status.headline
+        detail = status.detail
+
+    return {
+        "config": config,
+        "status": status,
+        "worker_online": worker_online,
+        "status_fresh": fresh,
+        "headline": headline,
+        "detail": detail,
+        "working": config.enabled and worker_online and fresh and status.is_working,
+        "current_mode": get_current_mode(db).value,
+    }
+
+
+def _autopilot_json(payload: dict) -> dict:
+    status: AutopilotStatus = payload["status"]
+    config: TradingAutomationConfig = payload["config"]
+    return {
+        "enabled": config.enabled,
+        "autopilot": config.autopilot,
+        "symbol": config.symbol,
+        "broker_symbol": status.broker_symbol,
+        "worker_online": payload["worker_online"],
+        "status_fresh": payload["status_fresh"],
+        "working": payload["working"],
+        "current_mode": payload["current_mode"],
+        "phase": status.phase,
+        "phase_label": status.phase_label,
+        "phase_icon": status.phase_icon,
+        "headline": payload["headline"],
+        "detail": payload["detail"],
+        "playbook_label": status.playbook_label,
+        "playbook_description": status.playbook_description,
+        "playbook_icon": status.playbook_icon,
+        "timeframe": status.timeframe,
+        "fit_score": status.fit_score,
+        "analysis_score": status.analysis_score,
+        "analysis_threshold": status.analysis_threshold,
+        "analysis_recommendation": status.analysis_recommendation,
+        "risk_factor": status.risk_factor,
+        "session_label": status.session_label,
+        "session_rating": status.session_rating,
+        "active_sessions": status.active_sessions,
+        "volume_label": status.volume_label,
+        "volume_level": status.volume_level,
+        "volume_ratio": status.volume_ratio,
+        "trend": status.trend,
+        "volatility": status.volatility,
+        "open_position": status.open_position,
+        "trades_today": status.trades_today,
+        "pnl_today": status.pnl_today,
+        "cycles": status.cycles,
+        "updated_at": status.updated_at,
+        "reasons": list(status.reasons),
+        "blockers": list(status.blockers),
+        "last_error": status.last_error,
+        "activities": summarize_activities(status.activities),
+    }
+
+
+def _apexflow_payload(db: Session) -> dict:
+    """Estado do ApexFlow para a pagina e para o polling.
+
+    Metricas de desempenho vem do historico REAL de decisoes
+    (`apexflow_decisions`) e ficam `None` ate haver amostra suficiente — o
+    painel mostra "—", nunca um profit factor inventado com dois trades.
+    """
+    config = load_apexflow_config(db)
+    automation = load_trading_automation_config(db)
+    symbol_row = SymbolRepository(db).get_by_name(automation.symbol)
+    symbol_id = symbol_row.id if symbol_row is not None else None
+
+    repository = ApexFlowDecisionRepository(db)
+    performance = repository.performance(symbol_id=symbol_id)
+    recent = repository.list_recent(symbol_id=symbol_id, limit=15)
+    latest = recent[0] if recent else None
+    # Latencia, drawdown e estado de parada vivem no status ao vivo (o worker
+    # os publica a cada ciclo), nao na tabela de decisoes: eles descrevem o
+    # ROBO agora, nao uma decisao passada.
+    status = load_autopilot_status(db)
+
+    return {
+        "apexflow_config": config,
+        "automation": automation,
+        "performance": performance,
+        "recent_decisions": recent,
+        "latest": latest,
+        "status": status,
+        "engine_active": automation.enabled and automation.engine == ENGINE_APEXFLOW,
+    }
+
+
+def _apexflow_json(payload: dict) -> dict:
+    latest = payload["latest"]
+    performance = payload["performance"]
+    config = payload["apexflow_config"]
+    status: AutopilotStatus = payload["status"]
+
+    def optional(value) -> float | None:
+        return None if value is None else float(value)
+
+    return {
+        "engine_active": payload["engine_active"],
+        "min_confidence": config.min_confidence,
+        "model_version": latest.model_version if latest else "",
+        "decided_at": latest.decided_at.isoformat() if latest else None,
+        "action": latest.action if latest else "",
+        "probability_buy": optional(latest.probability_buy) if latest else None,
+        "probability_sell": optional(latest.probability_sell) if latest else None,
+        "probability_abstain": optional(latest.probability_abstain) if latest else None,
+        "confidence": optional(latest.confidence) if latest else None,
+        "context_state": latest.context_state if latest else "",
+        "session_rating": latest.session_rating if latest else "",
+        "volume_level": latest.volume_level if latest else "",
+        "spread_points": optional(latest.spread_points) if latest else None,
+        "atr_points": optional(latest.atr_points) if latest else None,
+        "ticks_per_second": optional(latest.ticks_per_second) if latest else None,
+        "mtf_alignment": optional(latest.mtf_alignment) if latest else None,
+        "completeness": optional(latest.completeness) if latest else None,
+        "total_decisions": performance.total_decisions,
+        "entries": performance.entries,
+        "abstentions": performance.abstentions,
+        "abstention_rate": performance.abstention_rate,
+        "closed_trades": performance.closed_trades,
+        "has_statistics": performance.has_statistics,
+        "win_rate": performance.win_rate,
+        "profit_factor": performance.profit_factor,
+        "expectancy": performance.expectancy,
+        "net_pnl": performance.net_pnl,
+        "latency_seconds": status.latency_seconds,
+        "drawdown_pct": status.drawdown_pct,
+        "equity": status.equity,
+        "pnl_today": status.pnl_today,
+        "trades_today": status.trades_today,
+        "halt_reason": status.halt_reason,
+        "halt_detail": status.halt_detail,
+        "stop_management": status.stop_management,
+        "robot_phase": status.phase_label,
+        "robot_working": status.enabled and status.is_fresh() and status.is_working,
+        "session_label": status.session_label,
+        "decisions": [
+            {
+                "decided_at": record.decided_at.isoformat(),
+                "action": record.action,
+                "confidence": float(record.confidence),
+                "context_state": record.context_state,
+                "net_pnl": (
+                    None if record.result_net_pnl is None else float(record.result_net_pnl)
+                ),
+            }
+            for record in payload["recent_decisions"]
+        ],
+    }
+
+
+@router.get("/dashboard/apexflow", response_class=HTMLResponse)
+def dashboard_apexflow(
+    request: Request,
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    saved: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    payload = _apexflow_payload(db)
+    return templates.TemplateResponse(
+        request,
+        "dashboard/apexflow.html",
+        {"user": user, **payload, "saved": saved, "error": error},
+    )
+
+
+@router.get("/dashboard/apexflow/status", response_class=JSONResponse)
+def dashboard_apexflow_status(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    return JSONResponse(_apexflow_json(_apexflow_payload(db)))
+
+
+@router.post("/dashboard/apexflow")
+def dashboard_apexflow_save(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    min_confidence: float = Form(...),
+    min_atr_points: float = Form(...),
+    max_spread_points: float = Form(...),
+    risk_reward_min: float = Form(...),
+    daily_profit_target_pct: float = Form(...),
+    max_drawdown_pct: float = Form(...),
+    tick_window_seconds: int = Form(...),
+    use_engine: str = Form(""),
+) -> RedirectResponse:
+    """Salva os parametros do motor e escolhe qual cerebro decide.
+
+    NAO liga a automacao: ligar continua exigindo os portoes de
+    `/dashboard/autopilot` (confirmacao digitada, modo DEMO, conta demo).
+    Trocar de motor com o robo desligado nunca envia ordem.
+    """
+    validations = (
+        (0.50 <= min_confidence <= 0.99, "a confianca minima deve ficar entre 50% e 99%."),
+        (1.0 <= min_atr_points <= 10_000.0, "o ATR minimo deve ficar entre 1 e 10000 pontos."),
+        (1.0 <= max_spread_points <= 500.0, "o spread maximo deve ficar entre 1 e 500 pontos."),
+        (1.0 <= risk_reward_min <= 10.0, "o risco/retorno minimo deve ficar entre 1 e 10."),
+        (
+            0.5 <= daily_profit_target_pct <= 20.0,
+            "a meta diaria de lucro deve ficar entre 0,5% e 20%.",
+        ),
+        (1.0 <= max_drawdown_pct <= 30.0, "o drawdown maximo deve ficar entre 1% e 30%."),
+        (
+            10 <= tick_window_seconds <= 3_600,
+            "a janela de ticks deve ficar entre 10 e 3600 segundos.",
+        ),
+    )
+    for valid, message in validations:
+        if not valid:
+            return RedirectResponse(
+                url=f"/dashboard/apexflow?error={quote(message)}", status_code=303
+            )
+
+    save_apexflow_config(
+        db,
+        replace(
+            load_apexflow_config(db),
+            enabled=bool(use_engine),
+            min_confidence=min_confidence,
+            min_atr_points=min_atr_points,
+            max_spread_points=max_spread_points,
+            risk_reward_min=risk_reward_min,
+            daily_profit_target_pct=daily_profit_target_pct,
+            max_drawdown_pct=max_drawdown_pct,
+            tick_window_seconds=tick_window_seconds,
+        ),
+    )
+    save_trading_automation_config(
+        db,
+        replace(
+            load_trading_automation_config(db),
+            engine=ENGINE_APEXFLOW if use_engine else ENGINE_PLAYBOOK,
+        ),
+    )
+    AuditLogRepository(db).record(
+        action="apexflow_config_change",
+        entity="apexflow",
+        detail=(
+            f"motor={'apexflow' if use_engine else 'playbook'} "
+            f"confianca_minima={min_confidence:.2f}"
+        ),
+        user_id=user.id,
+    )
+    db.commit()
+    return RedirectResponse(url="/dashboard/apexflow?saved=1", status_code=303)
+
+
+@router.get("/dashboard/autopilot", response_class=HTMLResponse)
+def dashboard_autopilot(
+    request: Request,
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    saved: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    payload = _autopilot_payload(db)
+    symbols = SymbolRepository(db).list_active()
+    return templates.TemplateResponse(
+        request,
+        "dashboard/autopilot.html",
+        {
+            "user": user,
+            **payload,
+            "market_groups": grouped_availability(symbols),
+            "market_group_labels": GROUP_LABELS,
+            "saved": saved,
+            "error": error,
+        },
+    )
+
+
+@router.get("/dashboard/autopilot/status", response_class=JSONResponse)
+def dashboard_autopilot_status(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Consumido pelo polling da pagina — o painel mostra o que o robo esta
+    fazendo sem recarregar a tela."""
+    return JSONResponse(_autopilot_json(_autopilot_payload(db)))
+
+
+@router.post("/dashboard/autopilot")
+def dashboard_autopilot_save(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    symbol: str = Form(...),
+    enabled: str = Form(""),
+    confirm_text: str = Form(""),
+) -> RedirectResponse:
+    """Liga/desliga o piloto e define a moeda.
+
+    Reusa exatamente os mesmos portoes de `/dashboard/settings/trading`
+    (confirmacao digitada, modo DEMO, worker online, conta demo) — a tela
+    simplificada nao pode ser um caminho mais permissivo para chegar ao
+    mesmo lugar.
+    """
+    normalized_symbol = symbol.strip().upper()
+    requested_enabled = bool(enabled)
+    config = load_trading_automation_config(db)
+
+    available = {
+        availability.instrument.code
+        for availability in catalog_availability(SymbolRepository(db).list_active())
+        if availability.is_available
+    }
+    if normalized_symbol not in available:
+        return RedirectResponse(
+            url=(
+                "/dashboard/autopilot?error="
+                f"{quote('escolha uma moeda ja sincronizada com o MetaTrader.')}"
+            ),
+            status_code=303,
+        )
+
+    if requested_enabled:
+        sync_status = load_sync_status(db)
+        if confirm_text.strip().upper() != "DEMO":
+            return RedirectResponse(
+                url=(
+                    "/dashboard/autopilot?error="
+                    f"{quote('digite DEMO para ligar o piloto automatico.')}"
+                ),
+                status_code=303,
+            )
+        if get_current_mode(db) != SystemMode.DEMO:
+            return RedirectResponse(
+                url=(
+                    "/dashboard/autopilot?error="
+                    f"{quote('altere primeiro o modo operacional para DEMO.')}"
+                ),
+                status_code=303,
+            )
+        if not (
+            heartbeat_is_fresh(sync_status)
+            and sync_status.connected
+            and sync_status.account_is_demo is True
+        ):
+            return RedirectResponse(
+                url=(
+                    "/dashboard/autopilot?error="
+                    f"{quote('conecte e teste uma conta MT5 demo antes de ligar.')}"
+                ),
+                status_code=303,
+            )
+
+    updated = replace(
+        config,
+        enabled=requested_enabled,
+        autopilot=True,
+        symbol=normalized_symbol,
+    )
+    save_trading_automation_config(db, updated)
+
+    sync_config = load_sync_config(db)
+    if requested_enabled and normalized_symbol not in sync_config.symbols:
+        # Ligar o piloto em uma moeda fora do plano de coleta deixaria o
+        # robo sem candles para sempre — inclui a moeda em vez de falhar
+        # silenciosamente depois.
+        save_sync_config(
+            db, replace(sync_config, symbols=(*sync_config.symbols, normalized_symbol))
+        )
+    if requested_enabled and not sync_config.enabled:
+        save_sync_config(db, replace(load_sync_config(db), enabled=True))
+
+    AuditLogRepository(db).record(
+        action="autopilot_toggle",
+        entity="trading_automation",
+        detail=(
+            f"piloto automatico {'ligado' if requested_enabled else 'desligado'} "
+            f"em {normalized_symbol}"
+        ),
+        user_id=user.id,
+    )
+    db.commit()
+    return RedirectResponse(url="/dashboard/autopilot?saved=1", status_code=303)
 
 
 @router.get("/dashboard/settings/trading", response_class=HTMLResponse)

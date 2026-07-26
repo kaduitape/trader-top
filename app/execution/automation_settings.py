@@ -20,10 +20,41 @@ TRADING_AUTOMATION_CONFIG_KEY = "trading_automation_config"
 
 _TIMEFRAME_CODES = frozenset(timeframe.value for timeframe in ANALYSIS_TIMEFRAMES)
 
+ENGINE_PLAYBOOK = "playbook"
+ENGINE_APEXFLOW = "apexflow"
+ENGINES: frozenset[str] = frozenset({ENGINE_PLAYBOOK, ENGINE_APEXFLOW})
+
 
 @dataclass(frozen=True, slots=True)
 class TradingAutomationConfig:
     enabled: bool = False
+    autopilot: bool = True
+    """Piloto automatico (`app.execution.autopilot`): o robo escolhe sozinho
+    o operacional, o timeframe de execucao, o score minimo e o
+    multiplicador de risco a partir da sessao e do volume do par.
+
+    Ligado por padrao — e o modo que o operador pediu ("escolho a moeda, o
+    robo decide o resto"). Desligado, o comportamento anterior permanece
+    intacto: `timeframe`/`analysis_threshold` fixos, definidos a mao.
+
+    O piloto so pode tornar a operacao MAIS restritiva que a configuracao
+    (score minimo maior, risco menor) — nunca mais frouxa; ver
+    `app.execution.playbook`."""
+
+    engine: str = ENGINE_PLAYBOOK
+    """Qual cerebro decide a entrada:
+
+    - `playbook` (padrao) — o seletor de operacional
+      (`app.execution.playbook`) elege uma estrategia ja validada e a
+      analise Price Action/SMC da a permissao;
+    - `apexflow` — o motor ApexFlow AI (`app.apexflow`) decide COMPRAR,
+      VENDER ou NAO OPERAR a partir do fluxo de ticks, microestrutura e
+      contexto multi-timeframe.
+
+    Os dois caminhos passam pelos MESMOS portoes de risco e execucao
+    (`app.risk`, `app.execution.engine`) — a escolha muda quem decide, nunca
+    quais limites valem."""
+
     symbol: str = "XAUUSD"
     timeframe: str = "M15"
     analysis_threshold: float = 90.0
@@ -76,8 +107,14 @@ def load_trading_automation_config(session: Session) -> TradingAutomationConfig:
     if not symbol:
         symbol = defaults.symbol
 
+    engine = str(data.get("engine", defaults.engine)).strip().lower()
+    if engine not in ENGINES:
+        engine = defaults.engine
+
     return TradingAutomationConfig(
         enabled=bool(data.get("enabled", defaults.enabled)),
+        autopilot=bool(data.get("autopilot", defaults.autopilot)),
+        engine=engine,
         symbol=symbol[:32],
         timeframe=timeframe,
         analysis_threshold=_bounded_float(
