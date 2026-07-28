@@ -120,17 +120,29 @@ cada 15 segundos empurraria para fora exatamente os eventos que importam.
 
 ### Pelo dashboard
 
-`/dashboard/autopilot` — escolha a moeda entre as já sincronizadas, ligue o
-interruptor e digite `DEMO` para confirmar. O painel de status atualiza
-sozinho a cada 4 segundos.
+`/dashboard/trading` — a tela única de operação, em três passos: escolha a
+moeda entre as já sincronizadas, escolha **DEMO** ou **REAL** e clique em
+*Começar a operar*. O status atualiza sozinho a cada 4 segundos.
 
-Ligar exige, exatamente como em `/dashboard/settings/trading`: confirmação
-digitada, modo `DEMO`, worker online e conta identificada como demo.
-Desligar nunca pede confirmação.
+As telas antigas (`/dashboard/autopilot` e `/dashboard/settings/trading`)
+redirecionam para cá: há um lugar só para ligar o robô.
 
-Os limites de risco (perda diária, perdas seguidas, spread máximo,
-operações por dia) continuam em `/dashboard/settings/trading` — o piloto os
+Ligar exige moeda sincronizada, conector MT5 online e — a guarda que mais
+importa — **a conta do MetaTrader do mesmo tipo do modo escolhido**, nas
+duas direções: DEMO com conta real é recusado, e REAL com conta demo
+também. Um único clique percorre a escada de modos do sistema até `DEMO`
+ou `REAL_ENABLED`, registrando o caminho inteiro em auditoria. Desligar
+nunca falha por pré-requisito: parar tem que funcionar sempre.
+
+Os limites de risco (score mínimo, risco por operação, perda diária,
+perdas seguidas, spread máximo, operações por dia) ficam no bloco
+*Limites de risco* da mesma tela, recolhido por padrão — o piloto os
 respeita e só pode apertá-los.
+
+O mesmo bloco de status, com botões *Começar a operar* / *Parar*, aparece
+embutido em **Dados de mercado** (um botão por moeda coletada) e em
+**Análise PRO** (para a moeda analisada), sempre lendo o mesmo estado da
+tela de operação.
 
 ### Pela CLI
 
@@ -148,4 +160,4 @@ primeiro plano, útil para acompanhar as decisões no terminal.
 
 Desligar o piloto (`autopilot=false` na configuração) mantém o
 comportamento anterior intacto: `timeframe` e `analysis_threshold` fixos,
-definidos à mão em `/dashboard/settings/trading`.
+definidos à mão no bloco *Limites de risco* de `/dashboard/trading`.

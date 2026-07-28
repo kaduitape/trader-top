@@ -127,6 +127,7 @@ class DemoExecutionEngine:
         model_version: str = "rule-based",
         clock: Callable[[], datetime] | None = None,
         scope_across_timeframes: bool = False,
+        allow_real_account: bool = False,
     ) -> None:
         self._session = session
         self._client = client
@@ -147,6 +148,10 @@ class DemoExecutionEngine:
         self._symbol_spec = symbol_spec
         self._risk_limits = risk_limits
         self._magic = magic
+        self._allow_real_account = allow_real_account
+        """Reflete o modo configurado (DEMO/REAL). `app.mt5.orders` recusa
+        quando o tipo da conta conectada diverge deste valor."""
+
         self._model_version = model_version
         self._clock = clock or (lambda: datetime.now(UTC))
         self._trade_repo = LiveTradeRepository(session)
@@ -309,6 +314,7 @@ class DemoExecutionEngine:
                 result = send_market_order(
                     self._client,
                     account=self._account,
+                    allow_real_account=self._allow_real_account,
                     symbol=self._symbol,
                     direction=signal.direction,
                     volume=decision.computed_volume,

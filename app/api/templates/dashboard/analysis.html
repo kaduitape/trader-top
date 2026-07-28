@@ -79,6 +79,8 @@
         </div>
     </div>
 
+    {% include "dashboard/_robot_status.html" %}
+
     {% if error %}
     <div class="alert alert-danger d-flex gap-3 align-items-start" role="alert">
         <i class="bi bi-exclamation-octagon-fill fs-4"></i>
@@ -321,8 +323,13 @@
 
     <footer class="tp-analysis-footer mt-4">
         <i class="bi bi-info-circle me-2"></i>
-        Análise quantitativa consultiva. O painel não envia ordens ao MetaTrader 5.
+        Esta análise é consultiva: ela não dispara ordem nenhuma sozinha. Quem envia ordens
+        é o robô, e só depois que você clicar em <strong>Começar a operar</strong> acima.
         Confirme custos, spread, calendário econômico e limites da conta antes de qualquer execução.
     </footer>
 </section>
+{% endblock %}
+
+{% block scripts %}
+{% include "dashboard/_robot_status_js.html" %}
 {% endblock %}

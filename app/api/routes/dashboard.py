@@ -40,6 +40,7 @@ from app.database.repositories.paper_trade_repository import PaperTradeRepositor
 from app.database.repositories.symbol_repository import SymbolRepository
 from app.database.repositories.system_setting_repository import (
     SystemSettingRepository,
+    activate_trading_mode,
     get_current_mode,
     set_mode,
 )
@@ -48,6 +49,9 @@ from app.database.session import get_db
 from app.execution.automation_settings import (
     ENGINE_APEXFLOW,
     ENGINE_PLAYBOOK,
+    TRADING_MODE_DEMO,
+    TRADING_MODE_REAL,
+    TRADING_MODES,
     TradingAutomationConfig,
     load_trading_automation_config,
     save_trading_automation_config,
@@ -105,9 +109,16 @@ def _analysis_context(
     aisa_configured: bool = False,
     price_format: str = "%.5f",
     operation_config: TradingAutomationConfig | None = None,
+    trading: dict,
 ) -> dict:
     resolved_operation_config = operation_config or TradingAutomationConfig()
     return {
+        # O estado do robo vem inteiro do mesmo payload da tela de operacao,
+        # para que o widget embutido aqui nunca discorde dela.
+        **trading,
+        "robot_status_compact": True,
+        "robot_status_origin": "/dashboard/analysis",
+        "robot_status_symbol": selected_symbol or trading["config"].symbol,
         "user": user,
         "symbols": symbols,
         "selected_symbol": selected_symbol,
@@ -421,6 +432,8 @@ def dashboard_analysis(
     request: Request,
     symbol: str | None = None,
     timeframe: str = "M15",
+    saved: str | None = None,
+    error: str | None = None,
     user: User = Depends(get_current_user_for_web),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -429,7 +442,10 @@ def dashboard_analysis(
     symbols = SymbolRepository(db).list_active()
     persisted_key = SystemSettingRepository(db).get(AISA_API_KEY_SETTING)
     aisa_configured = bool(persisted_key or settings.aisa_api_key)
-    operation_config = load_trading_automation_config(db)
+    trading = _trading_payload(db)
+    trading["robot_saved"] = bool(saved)
+    trading["robot_error"] = error
+    operation_config = trading["config"]
 
     try:
         selected_timeframe = Timeframe(timeframe)
@@ -445,6 +461,7 @@ def dashboard_analysis(
                 error=f"Timeframe invalido: {timeframe}.",
                 aisa_configured=aisa_configured,
                 operation_config=operation_config,
+                trading=trading,
             ),
             status_code=400,
         )
@@ -461,6 +478,7 @@ def dashboard_analysis(
                 error="O timeframe selecionado nao pertence a matriz profissional de analise.",
                 aisa_configured=aisa_configured,
                 operation_config=operation_config,
+                trading=trading,
             ),
             status_code=400,
         )
@@ -477,6 +495,7 @@ def dashboard_analysis(
                 selected_timeframe=selected_timeframe,
                 aisa_configured=aisa_configured,
                 operation_config=operation_config,
+                trading=trading,
             ),
         )
 
@@ -493,6 +512,7 @@ def dashboard_analysis(
                 error="Ativo indisponivel. Selecione um simbolo sincronizado com o MetaTrader 5.",
                 aisa_configured=aisa_configured,
                 operation_config=operation_config,
+                trading=trading,
             ),
             status_code=404,
         )
@@ -530,6 +550,7 @@ def dashboard_analysis(
                 aisa_configured=aisa_configured,
                 price_format=f"%.{selected.digits}f",
                 operation_config=operation_config,
+                trading=trading,
             ),
         )
 
@@ -544,6 +565,7 @@ def dashboard_analysis(
             error=error,
             aisa_configured=aisa_configured,
             operation_config=operation_config,
+            trading=trading,
         ),
         status_code=status_code,
     )
@@ -627,6 +649,8 @@ def dashboard_market_data(
     request: Request,
     user: User = Depends(get_current_user_for_web),
     db: Session = Depends(get_db),
+    saved: str | None = None,
+    error: str | None = None,
 ) -> HTMLResponse:
     candle_summary = CandleRepository(db).summary()
     tick_summary = TickRepository(db).summary()
@@ -636,6 +660,13 @@ def dashboard_market_data(
         "dashboard/market_data.html",
         {
             "user": user,
+            # Mesmo payload da tela de operacao: o widget daqui liga o robo
+            # sem sair da pagina e mostra o estado real dele.
+            **_trading_payload(db),
+            "robot_status_compact": True,
+            "robot_status_origin": "/dashboard/market-data",
+            "robot_saved": bool(saved),
+            "robot_error": error,
             "candle_summary": candle_summary,
             "tick_summary": tick_summary,
             "symbol_count": len(unique_symbols),
@@ -711,92 +742,377 @@ def _mask_api_key(key: str) -> str:
     return "*" * (len(key) - 4) + key[-4:]
 
 
-_AUTOPILOT_READY_MESSAGE = (
-    "Escolha a moeda e ligue: o robo decide o operacional pelo horario e pelo volume."
-)
+_TRADING_START_ERRORS = {
+    "symbol": "escolha uma moeda ja sincronizada com o MetaTrader.",
+    "mode": "escolha DEMO ou REAL.",
+    "worker": "o conector MT5 precisa estar online. Abra o terminal no Windows.",
+    "account_demo": "modo DEMO escolhido, mas a conta conectada e REAL.",
+    "account_real": "modo REAL escolhido, mas a conta conectada e demo.",
+}
 
 
-def _autopilot_payload(db: Session) -> dict:
-    """Estado do piloto para a pagina e para o polling JSON — mesma fonte,
-    para que a tela nunca discorde de si mesma entre um refresh e outro."""
+def _trading_payload(db: Session) -> dict:
+    """Tudo o que a tela de operacao precisa, em uma consulta so.
+
+    Fonte unica para a pagina, para o polling e para os widgets embutidos em
+    outras telas — assim nenhuma delas mostra um estado diferente das
+    outras.
+    """
     config = load_trading_automation_config(db)
     status = load_autopilot_status(db)
     sync_status = load_sync_status(db)
     worker_online = heartbeat_is_fresh(sync_status)
     fresh = status.is_fresh()
+    wants_real = config.mode == TRADING_MODE_REAL
 
-    if not config.enabled:
-        headline = "Piloto automatico desligado."
-        detail = _AUTOPILOT_READY_MESSAGE
-    elif not worker_online:
-        headline = "Ligado, mas o conector do MetaTrader esta offline."
-        detail = "Abra o terminal MT5 no Windows e mantenha o worker rodando."
-    elif not fresh:
-        headline = "Ligado, aguardando o primeiro ciclo do worker."
-        detail = (
-            "O status ao vivo aparece assim que o worker publicar — se demorar, "
-            "confira os logs do worker."
+    # Pronto para ligar? Cada bloqueio vira uma frase acionavel, nunca um
+    # "indisponivel" sem motivo.
+    blockers: list[str] = []
+    if not worker_online:
+        blockers.append(
+            "Conector MT5 offline — abra o terminal no Windows e deixe o worker rodando."
         )
+    elif not sync_status.connected:
+        blockers.append("O terminal MT5 respondeu, mas nao esta conectado a corretora.")
+    elif sync_status.account_is_demo is None:
+        blockers.append("Aguardando o MT5 informar o tipo da conta.")
+    elif sync_status.account_is_demo is wants_real:
+        conectada = "demo" if sync_status.account_is_demo else "REAL"
+        blockers.append(
+            f"Modo {config.mode} escolhido, mas a conta conectada e {conectada}. "
+            "Troque o modo ou conecte a conta certa."
+        )
+
+    if config.enabled:
+        if not worker_online:
+            headline = "Ligado, mas o conector do MetaTrader esta offline."
+            detail = "Nenhuma ordem sera enviada ate o worker voltar."
+        elif not fresh:
+            headline = "Ligado, aguardando o primeiro ciclo do worker."
+            detail = "O status ao vivo aparece assim que o worker publicar."
+        else:
+            headline = status.headline
+            detail = status.detail
     else:
-        headline = status.headline
-        detail = status.detail
+        headline = "Robo parado."
+        detail = "Escolha a moeda, escolha DEMO ou REAL e clique em Comecar a operar."
 
     return {
         "config": config,
         "status": status,
+        "sync_status": sync_status,
         "worker_online": worker_online,
         "status_fresh": fresh,
         "headline": headline,
         "detail": detail,
         "working": config.enabled and worker_online and fresh and status.is_working,
+        "wants_real": wants_real,
+        "blockers": blockers,
+        "ready_to_start": not blockers,
         "current_mode": get_current_mode(db).value,
     }
 
 
-def _autopilot_json(payload: dict) -> dict:
+def _trading_json(payload: dict) -> dict:
     status: AutopilotStatus = payload["status"]
     config: TradingAutomationConfig = payload["config"]
     return {
         "enabled": config.enabled,
-        "autopilot": config.autopilot,
+        "mode": config.mode,
         "symbol": config.symbol,
         "broker_symbol": status.broker_symbol,
+        "engine": config.engine,
         "worker_online": payload["worker_online"],
         "status_fresh": payload["status_fresh"],
         "working": payload["working"],
-        "current_mode": payload["current_mode"],
+        "ready_to_start": payload["ready_to_start"],
+        "blockers": payload["blockers"],
+        "headline": payload["headline"],
+        "detail": payload["detail"],
         "phase": status.phase,
         "phase_label": status.phase_label,
         "phase_icon": status.phase_icon,
-        "headline": payload["headline"],
-        "detail": payload["detail"],
         "playbook_label": status.playbook_label,
         "playbook_description": status.playbook_description,
         "playbook_icon": status.playbook_icon,
         "timeframe": status.timeframe,
-        "fit_score": status.fit_score,
-        "analysis_score": status.analysis_score,
-        "analysis_threshold": status.analysis_threshold,
-        "analysis_recommendation": status.analysis_recommendation,
-        "risk_factor": status.risk_factor,
         "session_label": status.session_label,
-        "session_rating": status.session_rating,
         "active_sessions": status.active_sessions,
         "volume_label": status.volume_label,
-        "volume_level": status.volume_level,
-        "volume_ratio": status.volume_ratio,
-        "trend": status.trend,
-        "volatility": status.volatility,
+        "analysis_score": status.analysis_score,
         "open_position": status.open_position,
+        "stop_management": status.stop_management,
         "trades_today": status.trades_today,
         "pnl_today": status.pnl_today,
-        "cycles": status.cycles,
+        "drawdown_pct": status.drawdown_pct,
+        "halt_reason": status.halt_reason,
+        "halt_detail": status.halt_detail,
         "updated_at": status.updated_at,
         "reasons": list(status.reasons),
-        "blockers": list(status.blockers),
-        "last_error": status.last_error,
         "activities": summarize_activities(status.activities),
     }
+
+
+@router.get("/dashboard/trading", response_class=HTMLResponse)
+def dashboard_trading(
+    request: Request,
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    saved: str | None = None,
+    error: str | None = None,
+) -> HTMLResponse:
+    """Tela unica de operacao: escolher moeda, escolher DEMO/REAL, ligar.
+
+    Substitui `/dashboard/autopilot` e `/dashboard/settings/trading`, que
+    agora redirecionam para ca.
+    """
+    payload = _trading_payload(db)
+    return templates.TemplateResponse(
+        request,
+        "dashboard/trading.html",
+        {
+            "user": user,
+            **payload,
+            "market_groups": grouped_availability(SymbolRepository(db).list_active()),
+            "market_group_labels": GROUP_LABELS,
+            "analysis_timeframes": [tf.value for tf in ANALYSIS_TIMEFRAMES],
+            "saved": saved,
+            "error": error,
+        },
+    )
+
+
+@router.get("/dashboard/trading/status", response_class=JSONResponse)
+def dashboard_trading_status(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    return JSONResponse(_trading_json(_trading_payload(db)))
+
+
+# Faixas dos limites de risco. Sao as MESMAS que a tela antiga de
+# "Operacoes automaticas" aplicava: simplificar a tela nao pode afrouxar o
+# que o operador tem permissao de configurar.
+_TRADING_LIMIT_RULES: tuple[tuple[str, float, float, str], ...] = (
+    ("analysis_threshold", 50.0, 100.0, "o score minimo deve ficar entre 50 e 100."),
+    ("risk_per_trade_pct", 0.1, 1.0, "o risco por operacao deve ficar entre 0,1% e 1%."),
+    ("max_daily_loss_pct", 0.5, 5.0, "a perda diaria maxima deve ficar entre 0,5% e 5%."),
+    (
+        "max_consecutive_losses",
+        1,
+        10,
+        "o limite de perdas consecutivas deve ficar entre 1 e 10.",
+    ),
+    (
+        "max_simultaneous_positions",
+        1,
+        3,
+        "o limite de posicoes simultaneas deve ficar entre 1 e 3.",
+    ),
+    ("max_trades_per_day", 1, 50, "o limite diario de operacoes deve ficar entre 1 e 50."),
+    (
+        "min_seconds_between_trades",
+        60,
+        86_400,
+        "o intervalo entre operacoes deve ficar entre 60 e 86400 segundos.",
+    ),
+    ("max_spread_points", 1.0, 500.0, "o spread maximo deve ficar entre 1 e 500 pontos."),
+)
+
+
+def _validate_trading_limits(values: dict) -> str | None:
+    """Primeira faixa violada, em texto pronto para a tela — ou None."""
+    for field, low, high, message in _TRADING_LIMIT_RULES:
+        value = values.get(field)
+        if value is not None and not low <= value <= high:
+            return message
+    return None
+
+
+def _apply_trading_start(
+    db: Session,
+    *,
+    user: User,
+    symbol: str,
+    mode: str,
+    enabled: bool,
+    redirect_to: str,
+    limits: dict | None = None,
+) -> RedirectResponse:
+    """Liga/desliga o robo. Caminho unico, usado pela tela de operacao e
+    pelos botoes embutidos em Dados de mercado / Analise PRO.
+
+    Desligar nunca falha por pre-requisito: parar tem que funcionar sempre.
+    """
+    normalized_symbol = symbol.strip().upper()
+    normalized_mode = mode.strip().upper()
+
+    def fail(key: str) -> RedirectResponse:
+        return RedirectResponse(
+            url=f"{redirect_to}?error={quote(_TRADING_START_ERRORS[key])}", status_code=303
+        )
+
+    if enabled:
+        if normalized_mode not in TRADING_MODES:
+            return fail("mode")
+        available = {
+            item.instrument.code
+            for item in catalog_availability(SymbolRepository(db).list_active())
+            if item.is_available
+        }
+        if normalized_symbol not in available:
+            return fail("symbol")
+
+        sync_status = load_sync_status(db)
+        if not (heartbeat_is_fresh(sync_status) and sync_status.connected):
+            return fail("worker")
+        wants_real = normalized_mode == TRADING_MODE_REAL
+        if sync_status.account_is_demo is wants_real:
+            return fail("account_real" if wants_real else "account_demo")
+
+        # A escada de modos e percorrida pelo sistema, nao pelo operador.
+        activate_trading_mode(
+            db,
+            SystemMode.REAL_ENABLED if wants_real else SystemMode.DEMO,
+            reason=f"inicio de operacao em {normalized_symbol}",
+            user_id=user.id,
+        )
+
+    config = load_trading_automation_config(db)
+    save_trading_automation_config(
+        db,
+        replace(
+            config,
+            enabled=enabled,
+            autopilot=True,
+            mode=normalized_mode if normalized_mode in TRADING_MODES else config.mode,
+            symbol=normalized_symbol or config.symbol,
+            **(limits or {}),
+        ),
+    )
+
+    if enabled:
+        sync_config = load_sync_config(db)
+        updates = {}
+        if normalized_symbol not in sync_config.symbols:
+            # Ligar numa moeda fora do plano de coleta deixaria o robo sem
+            # candles para sempre.
+            updates["symbols"] = (*sync_config.symbols, normalized_symbol)
+        if not sync_config.enabled:
+            updates["enabled"] = True
+        if updates:
+            save_sync_config(db, replace(sync_config, **updates))
+
+    AuditLogRepository(db).record(
+        action="trading_start" if enabled else "trading_stop",
+        entity="trading_automation",
+        detail=(
+            f"{'ligado' if enabled else 'desligado'} em {normalized_symbol} "
+            f"modo={normalized_mode}"
+        ),
+        user_id=user.id,
+    )
+    db.commit()
+    return RedirectResponse(url=f"{redirect_to}?saved=1", status_code=303)
+
+
+@router.post("/dashboard/trading")
+def dashboard_trading_save(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    symbol: str = Form(...),
+    mode: str = Form(TRADING_MODE_DEMO),
+    action: str = Form("start"),
+    timeframe: str | None = Form(None),
+    analysis_threshold: float | None = Form(None),
+    risk_per_trade_pct: float | None = Form(None),
+    max_daily_loss_pct: float | None = Form(None),
+    max_consecutive_losses: int | None = Form(None),
+    max_simultaneous_positions: int | None = Form(None),
+    max_trades_per_day: int | None = Form(None),
+    min_seconds_between_trades: int | None = Form(None),
+    max_spread_points: float | None = Form(None),
+) -> RedirectResponse:
+    """Liga/desliga e, opcionalmente, ajusta os limites de risco.
+
+    Os limites vivem no bloco avancado da mesma tela: quem so quer operar
+    nao precisa toca-los, e quem precisa nao ficou sem lugar para faze-lo.
+    """
+    limits = {
+        field: value
+        for field, value in (
+            ("analysis_threshold", analysis_threshold),
+            ("risk_per_trade_pct", risk_per_trade_pct),
+            ("max_daily_loss_pct", max_daily_loss_pct),
+            ("max_consecutive_losses", max_consecutive_losses),
+            ("max_simultaneous_positions", max_simultaneous_positions),
+            ("max_trades_per_day", max_trades_per_day),
+            ("min_seconds_between_trades", min_seconds_between_trades),
+            ("max_spread_points", max_spread_points),
+        )
+        if value is not None
+    }
+    invalid = _validate_trading_limits(limits)
+    if invalid is not None:
+        return RedirectResponse(
+            url=f"/dashboard/trading?error={quote(invalid)}", status_code=303
+        )
+
+    normalized_timeframe = (timeframe or "").strip().upper()
+    if normalized_timeframe:
+        if normalized_timeframe not in {item.value for item in ANALYSIS_TIMEFRAMES}:
+            return RedirectResponse(
+                url=f"/dashboard/trading?error={quote('timeframe de operacao invalido.')}",
+                status_code=303,
+            )
+        limits["timeframe"] = normalized_timeframe
+
+    return _apply_trading_start(
+        db,
+        user=user,
+        symbol=symbol,
+        mode=mode,
+        enabled=action == "start",
+        redirect_to="/dashboard/trading",
+        limits=limits,
+    )
+
+
+@router.post("/dashboard/trading/quick")
+def dashboard_trading_quick(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    symbol: str = Form(...),
+    mode: str = Form(TRADING_MODE_DEMO),
+    action: str = Form("start"),
+    origin: str = Form("/dashboard/market-data"),
+) -> RedirectResponse:
+    """Mesmo caminho, chamado dos botoes de Dados de mercado / Analise PRO.
+
+    `origin` volta para a tela de onde o operador clicou; qualquer valor
+    fora da lista conhecida cai na tela de operacao, para que um parametro
+    manipulado nao vire redirecionamento aberto.
+    """
+    allowed = {"/dashboard/market-data", "/dashboard/analysis", "/dashboard/trading"}
+    return _apply_trading_start(
+        db,
+        user=user,
+        symbol=symbol,
+        mode=mode,
+        enabled=action == "start",
+        redirect_to=origin if origin in allowed else "/dashboard/trading",
+    )
+
+
+@router.get("/dashboard/autopilot", response_class=HTMLResponse)
+def dashboard_autopilot_redirect() -> RedirectResponse:
+    """Tela antiga do piloto — a configuracao agora vive em um lugar so."""
+    return RedirectResponse(url="/dashboard/trading", status_code=307)
+
+
+@router.get("/dashboard/settings/trading", response_class=HTMLResponse)
+def dashboard_settings_trading_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/dashboard/trading", status_code=307)
 
 
 def _apexflow_payload(db: Session) -> dict:
@@ -990,296 +1306,6 @@ def dashboard_apexflow_save(
     )
     db.commit()
     return RedirectResponse(url="/dashboard/apexflow?saved=1", status_code=303)
-
-
-@router.get("/dashboard/autopilot", response_class=HTMLResponse)
-def dashboard_autopilot(
-    request: Request,
-    user: User = Depends(get_current_user_for_web),
-    db: Session = Depends(get_db),
-    saved: str | None = None,
-    error: str | None = None,
-) -> HTMLResponse:
-    payload = _autopilot_payload(db)
-    symbols = SymbolRepository(db).list_active()
-    return templates.TemplateResponse(
-        request,
-        "dashboard/autopilot.html",
-        {
-            "user": user,
-            **payload,
-            "market_groups": grouped_availability(symbols),
-            "market_group_labels": GROUP_LABELS,
-            "saved": saved,
-            "error": error,
-        },
-    )
-
-
-@router.get("/dashboard/autopilot/status", response_class=JSONResponse)
-def dashboard_autopilot_status(
-    user: User = Depends(get_current_user_for_web),
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Consumido pelo polling da pagina — o painel mostra o que o robo esta
-    fazendo sem recarregar a tela."""
-    return JSONResponse(_autopilot_json(_autopilot_payload(db)))
-
-
-@router.post("/dashboard/autopilot")
-def dashboard_autopilot_save(
-    user: User = Depends(get_current_user_for_web),
-    db: Session = Depends(get_db),
-    symbol: str = Form(...),
-    enabled: str = Form(""),
-    confirm_text: str = Form(""),
-) -> RedirectResponse:
-    """Liga/desliga o piloto e define a moeda.
-
-    Reusa exatamente os mesmos portoes de `/dashboard/settings/trading`
-    (confirmacao digitada, modo DEMO, worker online, conta demo) — a tela
-    simplificada nao pode ser um caminho mais permissivo para chegar ao
-    mesmo lugar.
-    """
-    normalized_symbol = symbol.strip().upper()
-    requested_enabled = bool(enabled)
-    config = load_trading_automation_config(db)
-
-    available = {
-        availability.instrument.code
-        for availability in catalog_availability(SymbolRepository(db).list_active())
-        if availability.is_available
-    }
-    if normalized_symbol not in available:
-        return RedirectResponse(
-            url=(
-                "/dashboard/autopilot?error="
-                f"{quote('escolha uma moeda ja sincronizada com o MetaTrader.')}"
-            ),
-            status_code=303,
-        )
-
-    if requested_enabled:
-        sync_status = load_sync_status(db)
-        if confirm_text.strip().upper() != "DEMO":
-            return RedirectResponse(
-                url=(
-                    "/dashboard/autopilot?error="
-                    f"{quote('digite DEMO para ligar o piloto automatico.')}"
-                ),
-                status_code=303,
-            )
-        if get_current_mode(db) != SystemMode.DEMO:
-            return RedirectResponse(
-                url=(
-                    "/dashboard/autopilot?error="
-                    f"{quote('altere primeiro o modo operacional para DEMO.')}"
-                ),
-                status_code=303,
-            )
-        if not (
-            heartbeat_is_fresh(sync_status)
-            and sync_status.connected
-            and sync_status.account_is_demo is True
-        ):
-            return RedirectResponse(
-                url=(
-                    "/dashboard/autopilot?error="
-                    f"{quote('conecte e teste uma conta MT5 demo antes de ligar.')}"
-                ),
-                status_code=303,
-            )
-
-    updated = replace(
-        config,
-        enabled=requested_enabled,
-        autopilot=True,
-        symbol=normalized_symbol,
-    )
-    save_trading_automation_config(db, updated)
-
-    sync_config = load_sync_config(db)
-    if requested_enabled and normalized_symbol not in sync_config.symbols:
-        # Ligar o piloto em uma moeda fora do plano de coleta deixaria o
-        # robo sem candles para sempre — inclui a moeda em vez de falhar
-        # silenciosamente depois.
-        save_sync_config(
-            db, replace(sync_config, symbols=(*sync_config.symbols, normalized_symbol))
-        )
-    if requested_enabled and not sync_config.enabled:
-        save_sync_config(db, replace(load_sync_config(db), enabled=True))
-
-    AuditLogRepository(db).record(
-        action="autopilot_toggle",
-        entity="trading_automation",
-        detail=(
-            f"piloto automatico {'ligado' if requested_enabled else 'desligado'} "
-            f"em {normalized_symbol}"
-        ),
-        user_id=user.id,
-    )
-    db.commit()
-    return RedirectResponse(url="/dashboard/autopilot?saved=1", status_code=303)
-
-
-@router.get("/dashboard/settings/trading", response_class=HTMLResponse)
-def dashboard_settings_trading(
-    request: Request,
-    user: User = Depends(get_current_user_for_web),
-    db: Session = Depends(get_db),
-    saved: str | None = None,
-    error: str | None = None,
-) -> HTMLResponse:
-    config = load_trading_automation_config(db)
-    sync_config = load_sync_config(db)
-    sync_status = load_sync_status(db)
-    return templates.TemplateResponse(
-        request,
-        "dashboard/settings_trading.html",
-        {
-            "user": user,
-            "config": config,
-            "sync_config": sync_config,
-            "status": sync_status,
-            "worker_online": heartbeat_is_fresh(sync_status),
-            "current_mode": get_current_mode(db).value,
-            "analysis_timeframes": [timeframe.value for timeframe in ANALYSIS_TIMEFRAMES],
-            "saved": saved,
-            "error": error,
-        },
-    )
-
-
-@router.post("/dashboard/settings/trading")
-def dashboard_settings_trading_save(
-    user: User = Depends(get_current_user_for_web),
-    db: Session = Depends(get_db),
-    symbol: str = Form(...),
-    timeframe: str = Form(...),
-    analysis_threshold: float = Form(...),
-    risk_per_trade_pct: float = Form(...),
-    max_daily_loss_pct: float = Form(...),
-    max_consecutive_losses: int = Form(...),
-    max_simultaneous_positions: int = Form(...),
-    max_trades_per_day: int = Form(...),
-    min_seconds_between_trades: int = Form(...),
-    max_spread_points: float = Form(...),
-    enabled: str = Form(""),
-    confirm_text: str = Form(""),
-) -> RedirectResponse:
-    normalized_symbol = symbol.strip().upper()
-    normalized_timeframe = timeframe.strip().upper()
-    requested_enabled = bool(enabled)
-    sync_config = load_sync_config(db)
-
-    validations = (
-        (normalized_symbol in sync_config.symbols, "selecione um ativo do plano MT5."),
-        (
-            normalized_timeframe in {item.value for item in ANALYSIS_TIMEFRAMES},
-            "timeframe de operacao invalido.",
-        ),
-        (50.0 <= analysis_threshold <= 100.0, "o score minimo deve ficar entre 50 e 100."),
-        (
-            0.1 <= risk_per_trade_pct <= 1.0,
-            "o risco por operacao deve ficar entre 0,1% e 1%.",
-        ),
-        (
-            0.5 <= max_daily_loss_pct <= 5.0,
-            "a perda diaria maxima deve ficar entre 0,5% e 5%.",
-        ),
-        (
-            1 <= max_consecutive_losses <= 10,
-            "o limite de perdas consecutivas deve ficar entre 1 e 10.",
-        ),
-        (
-            1 <= max_simultaneous_positions <= 3,
-            "o limite de posicoes simultaneas deve ficar entre 1 e 3.",
-        ),
-        (
-            1 <= max_trades_per_day <= 50,
-            "o limite diario de operacoes deve ficar entre 1 e 50.",
-        ),
-        (
-            60 <= min_seconds_between_trades <= 86_400,
-            "o intervalo entre operacoes deve ficar entre 60 e 86400 segundos.",
-        ),
-        (
-            1.0 <= max_spread_points <= 500.0,
-            "o spread maximo deve ficar entre 1 e 500 pontos.",
-        ),
-    )
-    for valid, message in validations:
-        if not valid:
-            return RedirectResponse(
-                url=f"/dashboard/settings/trading?error={quote(message)}",
-                status_code=303,
-            )
-
-    if requested_enabled:
-        status = load_sync_status(db)
-        if confirm_text.strip().upper() != "DEMO":
-            return RedirectResponse(
-                url=(
-                    "/dashboard/settings/trading?error="
-                    f"{quote('digite DEMO para ativar a automacao.')}"
-                ),
-                status_code=303,
-            )
-        if get_current_mode(db) != SystemMode.DEMO:
-            return RedirectResponse(
-                url=(
-                    "/dashboard/settings/trading?error="
-                    f"{quote('altere primeiro o modo operacional para DEMO.')}"
-                ),
-                status_code=303,
-            )
-        if not (
-            heartbeat_is_fresh(status)
-            and status.connected
-            and status.account_is_demo is True
-        ):
-            return RedirectResponse(
-                url=(
-                    "/dashboard/settings/trading?error="
-                    f"{quote('conecte e teste uma conta MT5 demo antes de ativar.')}"
-                ),
-                status_code=303,
-            )
-
-    updated = TradingAutomationConfig(
-        enabled=requested_enabled,
-        symbol=normalized_symbol,
-        timeframe=normalized_timeframe,
-        analysis_threshold=analysis_threshold,
-        risk_per_trade_pct=risk_per_trade_pct,
-        max_daily_loss_pct=max_daily_loss_pct,
-        max_consecutive_losses=max_consecutive_losses,
-        max_simultaneous_positions=max_simultaneous_positions,
-        max_trades_per_day=max_trades_per_day,
-        min_seconds_between_trades=min_seconds_between_trades,
-        max_spread_points=max_spread_points,
-    )
-    save_trading_automation_config(db, updated)
-
-    if requested_enabled and not sync_config.enabled:
-        save_sync_config(
-            db,
-            replace(sync_config, enabled=True, sync_request_id=uuid4().hex),
-        )
-
-    AuditLogRepository(db).record(
-        action="trading_automation_settings_change",
-        entity="trading_automation",
-        detail=(
-            f"{'ativada' if requested_enabled else 'desativada'} para "
-            f"{normalized_symbol}/{normalized_timeframe}; score minimo "
-            f"{analysis_threshold:.1f}; risco {risk_per_trade_pct:.2f}%; "
-            f"maximo {max_trades_per_day} operacoes/dia por {user.username}"
-        ),
-        user_id=user.id,
-    )
-    db.commit()
-    return RedirectResponse(url="/dashboard/settings/trading?saved=1", status_code=303)
 
 
 @router.get("/dashboard/settings/aisa", response_class=HTMLResponse)

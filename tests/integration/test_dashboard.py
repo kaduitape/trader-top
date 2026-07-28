@@ -315,14 +315,24 @@ def test_dashboard_mode_page_renders_current_mode_and_options(client, db_session
 
     response = client.get("/dashboard/mode")
 
+    import re
+
+    from app.core.enums import SystemMode
+    from app.core.system_mode import SystemModeError, validate_transition
+
     assert response.status_code == 200
     current = get_current_mode(db_session)
     assert current.value in response.text
-    # REAL_LOCKED/REAL_ENABLED nunca aparecem como <option> selecionavel,
-    # em nenhum estado (o rodape da pagina cita os dois pelo nome para
-    # explicar que estao bloqueados -- so a tag <option> importa aqui).
-    assert '<option value="REAL_LOCKED">' not in response.text
-    assert '<option value="REAL_ENABLED">' not in response.text
+    # A pagina so pode oferecer transicoes que o backend aceitaria: com o
+    # modo REAL liberado, o que protege o operador nao e esconder REAL_*, e
+    # sim nunca permitir pular degraus da escada.
+    offered = re.findall(r'<option value="([A-Z_]+)">', response.text)
+    assert offered
+    for value in offered:
+        try:
+            validate_transition(current, SystemMode(value))
+        except SystemModeError as exc:  # pragma: no cover - so falha se regredir
+            raise AssertionError(f"{current.value} -> {value} nao e permitido") from exc
 
 
 def test_dashboard_mode_change_wrong_confirmation_does_not_change_mode(client, db_session) -> None:
@@ -381,9 +391,9 @@ def test_dashboard_mode_change_success_updates_mode_and_audit_log(client, db_ses
 
 
 def test_dashboard_mode_change_rejects_invalid_transition(client, db_session) -> None:
-    """Mesmo que o formulario nunca ofereca REAL_ENABLED como opcao, o
-    backend tem que recusar de qualquer forma -- o HTML nao e a unica
-    linha de defesa."""
+    """O formulario so oferece transicoes validas, mas o backend tem que
+    recusar de qualquer forma -- o HTML nao e a unica linha de defesa.
+    REAL_ENABLED nunca e alcancavel sem passar por REAL_LOCKED."""
     from app.database.repositories.system_setting_repository import get_current_mode
 
     _create_user(db_session, "dash_mode_invalid", "correct-password")
@@ -669,85 +679,6 @@ def test_dashboard_settings_aisa_redirects_to_login_when_unauthenticated(client)
     response = client.get("/dashboard/settings/aisa", follow_redirects=False)
     assert response.status_code == 302
     assert response.headers["location"] == "/login"
-
-
-def _trading_settings_payload(**overrides) -> dict[str, str]:
-    payload = {
-        "symbol": "XAUUSD",
-        "timeframe": "M15",
-        "analysis_threshold": "85",
-        "risk_per_trade_pct": "0.5",
-        "max_daily_loss_pct": "2",
-        "max_consecutive_losses": "2",
-        "max_simultaneous_positions": "1",
-        "max_trades_per_day": "5",
-        "min_seconds_between_trades": "120",
-        "max_spread_points": "40",
-    }
-    payload.update(overrides)
-    return payload
-
-
-def test_dashboard_trading_settings_can_change_limit_while_disabled(
-    client, db_session
-) -> None:
-    from app.execution.automation_settings import load_trading_automation_config
-
-    _create_user(db_session, "dash_trading_settings_user", "correct-password")
-    _login(client, "dash_trading_settings_user", "correct-password")
-
-    response = client.post(
-        "/dashboard/settings/trading",
-        data=_trading_settings_payload(),
-        follow_redirects=False,
-    )
-
-    assert response.status_code == 303
-    assert response.headers["location"] == "/dashboard/settings/trading?saved=1"
-    config = load_trading_automation_config(db_session)
-    assert config.analysis_threshold == 85.0
-    assert config.risk_per_trade_pct == 0.5
-    assert config.enabled is False
-
-    view = client.get("/dashboard/settings/trading")
-    assert view.status_code == 200
-    assert "Operações automáticas" in view.text
-    assert 'value="85.0"' in view.text
-
-
-def test_dashboard_trading_settings_rejects_unsafe_risk_limit(
-    client, db_session
-) -> None:
-    _create_user(db_session, "dash_trading_limit_user", "correct-password")
-    _login(client, "dash_trading_limit_user", "correct-password")
-
-    response = client.post(
-        "/dashboard/settings/trading",
-        data=_trading_settings_payload(risk_per_trade_pct="2"),
-        follow_redirects=False,
-    )
-
-    assert response.status_code == 303
-    assert "error=" in response.headers["location"]
-
-
-def test_dashboard_trading_settings_cannot_enable_without_demo_preconditions(
-    client, db_session
-) -> None:
-    from app.execution.automation_settings import load_trading_automation_config
-
-    _create_user(db_session, "dash_trading_enable_user", "correct-password")
-    _login(client, "dash_trading_enable_user", "correct-password")
-
-    response = client.post(
-        "/dashboard/settings/trading",
-        data=_trading_settings_payload(enabled="1", confirm_text="DEMO"),
-        follow_redirects=False,
-    )
-
-    assert response.status_code == 303
-    assert "error=" in response.headers["location"]
-    assert load_trading_automation_config(db_session).enabled is False
 
 
 def test_dashboard_settings_aisa_shows_not_configured_by_default(client, db_session) -> None:

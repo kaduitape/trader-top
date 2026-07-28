@@ -1,0 +1,139 @@
+{#
+    Status ao vivo do robo — bloco compartilhado.
+
+    Usado na tela de operacao e embutido em Dados de mercado / Analise PRO,
+    para que todas mostrem exatamente o mesmo estado. O JavaScript de
+    atualizacao esta em `_robot_status_js.html` e atualiza estes mesmos ids.
+
+    Variaveis opcionais de quem inclui:
+      robot_status_compact  -> esconde a grade de metricas e o "por que"
+      robot_status_origin   -> mostra os botoes Comecar/Parar apontando de volta
+                               para a pagina atual (POST /dashboard/trading/quick)
+#}
+{% if robot_error %}
+<div class="alert alert-danger"><i class="bi bi-exclamation-octagon me-2"></i>{{ robot_error }}</div>
+{% endif %}
+{% if robot_saved %}
+<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i>Configuração aplicada.</div>
+{% endif %}
+
+<section class="tp-pilot-hero {% if working %}is-working{% elif config.enabled %}is-waiting{% endif %}"
+         id="robotHero" aria-live="polite">
+    <div class="tp-pilot-headline">
+        <span class="tp-pilot-pulse" aria-hidden="true"></span>
+        <div class="tp-pilot-copy">
+            <span class="tp-eyebrow" id="robotPhase">
+                <i class="bi {{ status.phase_icon }} me-1" id="robotPhaseIcon"></i>{{ status.phase_label }}
+            </span>
+            <strong id="robotHeadline">{{ headline }}</strong>
+            <span id="robotDetail">{{ detail }}</span>
+        </div>
+        <div class="tp-pilot-symbol">
+            <span>
+                <span class="tp-mode-badge {% if wants_real %}is-real{% else %}is-demo{% endif %}"
+                      id="robotModeBadge">{{ config.mode }}</span>
+            </span>
+            <strong id="robotSymbol">{{ status.broker_symbol or config.symbol }}</strong>
+        </div>
+    </div>
+
+    <div class="tp-pilot-playbook" id="robotPlaybook" {% if not status.playbook_label %}hidden{% endif %}>
+        <span class="tp-stat-icon"><i class="bi {{ status.playbook_icon }}" id="robotPlaybookIcon"></i></span>
+        <div>
+            <span class="tp-eyebrow">Operacional escolhido pelo robô</span>
+            <strong id="robotPlaybookLabel">{{ status.playbook_label }}</strong>
+            <p id="robotPlaybookDescription">{{ status.playbook_description }}</p>
+        </div>
+    </div>
+
+    <div class="tp-pilot-position" id="robotPosition" {% if not status.open_position %}hidden{% endif %}>
+        <i class="bi bi-broadcast-pin"></i>
+        <span id="robotPositionText">{{ status.open_position }}</span>
+    </div>
+
+    {% if robot_status_origin %}
+    <form method="post" action="/dashboard/trading/quick" class="tp-pilot-actions">
+        <input type="hidden" name="origin" value="{{ robot_status_origin }}">
+        <input type="hidden" name="symbol" value="{{ robot_status_symbol or config.symbol }}">
+        <input type="hidden" name="mode" value="{{ config.mode }}">
+        <button class="btn btn-primary" type="submit" name="action" value="start"
+                data-robot-start {% if not ready_to_start %}disabled{% endif %}>
+            <i class="bi bi-play-fill me-2"></i>Começar a operar
+            {%- if robot_status_symbol %} {{ robot_status_symbol }}{% endif -%}
+        </button>
+        <button class="btn btn-outline-light" type="submit" name="action" value="stop"
+                data-robot-stop {% if not config.enabled %}disabled{% endif %}>
+            <i class="bi bi-stop-fill me-2"></i>Parar
+        </button>
+        <a class="btn btn-link" href="/dashboard/trading">Configurar</a>
+    </form>
+    {% if blockers %}
+    <ul class="tp-reason-list tp-pilot-blockers" id="robotBlockers">
+        {% for blocker in blockers %}
+        <li class="is-blocker"><i class="bi bi-slash-circle"></i>{{ blocker }}</li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <ul class="tp-reason-list tp-pilot-blockers" id="robotBlockers" hidden></ul>
+    {% endif %}
+    {% endif %}
+</section>
+
+{% if not robot_status_compact %}
+<div class="tp-stat-grid">
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-clock-history"></i></span>
+        <span class="tp-stat-copy">
+            <span>Sessão</span>
+            <strong id="robotSession">{{ status.active_sessions or "—" }}</strong>
+        </span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-bar-chart-line"></i></span>
+        <span class="tp-stat-copy">
+            <span>Volume do horário</span>
+            <strong id="robotVolume">{{ status.volume_label or "—" }}</strong>
+        </span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-speedometer2"></i></span>
+        <span class="tp-stat-copy">
+            <span>Operações hoje</span>
+            <strong id="robotTrades">{{ status.trades_today }}</strong>
+        </span>
+    </div>
+    <div class="tp-stat-card">
+        <span class="tp-stat-icon"><i class="bi bi-graph-up"></i></span>
+        <span class="tp-stat-copy">
+            <span>Resultado do dia</span>
+            <strong id="robotPnl">{{ "%.2f"|format(status.pnl_today) }}</strong>
+        </span>
+    </div>
+</div>
+
+<section class="card mb-4">
+    <div class="card-header"><i class="bi bi-info-circle me-2"></i>Por que esta decisão</div>
+    <div class="card-body p-4">
+        <ul class="tp-reason-list" id="robotReasons">
+            {% for reason in blockers %}
+            <li class="is-blocker"><i class="bi bi-slash-circle"></i>{{ reason }}</li>
+            {% endfor %}
+            {% for reason in status.reasons %}
+            <li><i class="bi bi-dot"></i>{{ reason }}</li>
+            {% endfor %}
+            {% if not status.reasons and not blockers %}
+            <li><i class="bi bi-dot"></i>O raciocínio aparece assim que o primeiro ciclo rodar.</li>
+            {% endif %}
+        </ul>
+        <div class="tp-pilot-meta">
+            <div><span>Timeframe</span><strong id="robotTimeframe">{{ status.timeframe or "—" }}</strong></div>
+            <div><span>Score da análise</span><strong id="robotScore">
+                {%- if status.analysis_score is not none %}{{ "%.0f"|format(status.analysis_score) }}{% else %}—{% endif -%}
+            </strong></div>
+            <div><span>Proteção do stop</span><strong id="robotStopManagement">
+                {{- status.stop_management or "—" -}}
+            </strong></div>
+        </div>
+    </div>
+</section>
+{% endif %}

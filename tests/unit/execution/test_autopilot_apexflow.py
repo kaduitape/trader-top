@@ -106,7 +106,7 @@ def test_apexflow_never_sends_an_order_on_a_real_account(db_session) -> None:
     result, _ = run(db_session, config=apexflow_config(), account=REAL_ACCOUNT)
 
     assert result.phase == AutopilotPhase.BLOCKED
-    assert "nao e demo" in (result.blocking_error or "")
+    assert "modo DEMO com conta REAL" in (result.blocking_error or "")
 
 
 def test_apexflow_requires_demo_mode(db_session) -> None:

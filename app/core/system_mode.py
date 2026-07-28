@@ -26,11 +26,19 @@ Regras impostas (não apenas convenção):
   (nunca a partir de `DISABLED`, que já é o estado mais seguro).
 - A partir de `EMERGENCY_STOP`, só é permitido voltar para `DISABLED`
   (reset manual) — nunca retomar diretamente de onde parou.
-- `REAL_LOCKED` e `REAL_ENABLED` permanecem bloqueados incondicionalmente
-  até que toda a confirmação manual multi-etapa exigida pelo prompt
-  mestre (seção 2: chave de liberação, prazo de expiração, valor máximo
-  diário, lista de símbolos autorizados etc.) esteja implementada —
-  ainda fora do escopo desta fase.
+- `REAL_LOCKED` e `REAL_ENABLED` estão liberados, por decisão explícita do
+  operador dono do sistema. Não há cerimônia de liberação (chave temporária,
+  prazo de expiração, teto de perda separado): ligar o modo real é uma
+  escolha direta na tela de operação.
+
+  O que continua protegendo, e não é contornável por configuração:
+
+  * o tipo da conta conectada precisa BATER com o modo escolhido
+    (`app.mt5.orders`) — apontar para uma conta real achando que está em
+    demo é recusado, e o contrário também;
+  * o motor de risco (`app.risk`) mantém poder de veto sobre cada sinal;
+  * perda diária, perdas consecutivas, spread e intervalo entre operações
+    seguem valendo igual nos dois modos.
 """
 
 from __future__ import annotations
@@ -44,11 +52,22 @@ FORWARD_ORDER: tuple[SystemMode, ...] = (
     SystemMode.REPLAY,
     SystemMode.PAPER,
     SystemMode.DEMO,
+    SystemMode.REAL_LOCKED,
+    SystemMode.REAL_ENABLED,
 )
 
-NOT_YET_IMPLEMENTED_MODES: frozenset[SystemMode] = frozenset(
+NOT_YET_IMPLEMENTED_MODES: frozenset[SystemMode] = frozenset()
+"""Nenhum modo bloqueado por falta de implementação.
+
+Mantido (vazio) em vez de removido porque `validate_transition` continua
+consultando este conjunto: uma fase futura que precise barrar um modo
+novo volta a preenchê-lo sem mexer na lógica de transição."""
+
+REAL_MODES: frozenset[SystemMode] = frozenset(
     {SystemMode.REAL_LOCKED, SystemMode.REAL_ENABLED}
 )
+"""Modos que operam com dinheiro real. Usado por quem precisa avisar o
+operador ou exigir confirmação extra — não é um bloqueio."""
 
 
 class SystemModeError(Exception):

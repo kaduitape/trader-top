@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}Operar — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Operação</span>
+        <h1 class="tp-page-title">Operar</h1>
+        <p class="tp-page-description">
+            Escolha a moeda, escolha DEMO ou REAL e comece. O robô decide o resto
+            e mostra aqui o que está fazendo.
+        </p>
+    </div>
+    <a href="/dashboard/live-trades" class="btn btn-outline-light">
+        <i class="bi bi-broadcast-pin me-2"></i>Ver operações
+    </a>
+</header>
+
+{% if error %}
+<div class="alert alert-danger"><i class="bi bi-exclamation-octagon me-2"></i>{{ error }}</div>
+{% endif %}
+{% if saved %}
+<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i>Configuração aplicada.</div>
+{% endif %}
+
+{% include "dashboard/_robot_status.html" %}
+
+<div class="row g-4">
+    <div class="col-xl-7">
+        <form method="post" action="/dashboard/trading">
+            <section class="card mb-4">
+                <div class="card-header"><i class="bi bi-1-circle me-2"></i>Escolha a moeda</div>
+                <div class="card-body p-4">
+                    <div class="tp-pilot-picker" role="radiogroup" aria-label="Moeda operada">
+                        {% set disponivel = [] %}
+                        {% for group, items in market_groups.items() %}
+                            {% set available = items|selectattr("is_available")|list %}
+                            {% if available %}
+                            {% if disponivel.append(1) %}{% endif %}
+                            <span class="tp-pilot-group">{{ market_group_labels[group] }}</span>
+                            <div class="tp-pilot-options">
+                                {% for item in available %}
+                                <label class="tp-pilot-option">
+                                    <input type="radio" name="symbol" value="{{ item.instrument.code }}"
+                                           {% if config.symbol == item.instrument.code %}checked{% endif %} required>
+                                    <span>
+                                        <i class="bi {{ item.instrument.icon }}"></i>
+                                        <strong>{{ item.instrument.code }}</strong>
+                                        <small>{{ item.instrument.label }}</small>
+                                    </span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        {% endfor %}
+                        {% if not disponivel %}
+                        <div class="tp-context-note">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <div>
+                                Nenhuma moeda sincronizada ainda. Configure a
+                                <a href="/dashboard/mt5">conexão MT5</a> e aguarde a primeira coleta.
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </section>
+
+            <section class="card mb-4">
+                <div class="card-header"><i class="bi bi-2-circle me-2"></i>Escolha o tipo de conta</div>
+                <div class="card-body p-4">
+                    <div class="tp-mode-picker" role="radiogroup" aria-label="Tipo de operação">
+                        <label class="tp-mode-option is-demo">
+                            <input type="radio" name="mode" value="DEMO"
+                                   {% if config.mode != "REAL" %}checked{% endif %}>
+                            <span>
+                                <i class="bi bi-shield-check"></i>
+                                <strong>DEMO</strong>
+                                <small>Dinheiro fictício. Use para validar antes de arriscar.</small>
+                            </span>
+                        </label>
+                        <label class="tp-mode-option is-real">
+                            <input type="radio" name="mode" value="REAL"
+                                   {% if config.mode == "REAL" %}checked{% endif %}>
+                            <span>
+                                <i class="bi bi-cash-stack"></i>
+                                <strong>REAL</strong>
+                                <small>Dinheiro de verdade. As perdas são suas.</small>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="tp-context-note mt-4">
+                        <i class="bi bi-info-circle"></i>
+                        <div>
+                            A conta conectada no MetaTrader precisa <strong>bater</strong> com o tipo
+                            escolhido. Se você marcar DEMO e a conta for real (ou o contrário), o robô
+                            recusa e avisa — nunca opera "por engano".
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-header"><i class="bi bi-3-circle me-2"></i>Comece</div>
+                <div class="card-body p-4">
+                    {% if blockers %}
+                    <ul class="tp-reason-list mb-4">
+                        {% for blocker in blockers %}
+                        <li class="is-blocker"><i class="bi bi-slash-circle"></i>{{ blocker }}</li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+
+                    {# Os botoes ficam sempre clicaveis: o bloqueio acima pode ser
+                       justamente o que a escolha atual do formulario resolve (trocar
+                       DEMO/REAL, por exemplo). Quem valida de verdade e o servidor,
+                       que devolve o motivo em texto. #}
+                    <div class="d-flex gap-3 flex-wrap">
+                        <button class="btn btn-primary btn-lg flex-grow-1" type="submit"
+                                name="action" value="start">
+                            <i class="bi bi-play-fill me-2"></i>Começar a operar
+                        </button>
+                        <button class="btn btn-outline-light btn-lg" type="submit"
+                                name="action" value="stop">
+                            <i class="bi bi-stop-fill me-2"></i>Parar
+                        </button>
+                    </div>
+                    <p class="small text-muted mt-3 mb-0">
+                        Parar tem efeito imediato: nenhuma ordem nova é enviada. Posições já
+                        abertas continuam com stop e alvo na corretora.
+                    </p>
+
+                    <details class="tp-advanced mt-4">
+                        <summary>Limites de risco (opcional)</summary>
+                        <p class="small text-muted mt-3">
+                            Os valores abaixo já vêm prontos. Mexa só se souber o que está
+                            fazendo — eles são salvos junto com o botão acima.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-sm-6">
+                                <label class="form-label" for="timeframe">Timeframe de operação</label>
+                                <select class="form-select" id="timeframe" name="timeframe">
+                                    {% for tf in analysis_timeframes %}
+                                    <option value="{{ tf }}" {% if config.timeframe == tf %}selected{% endif %}>
+                                        {% if tf == "MN1" %}MN{% else %}{{ tf }}{% endif %}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-sm-6">
+                                <label class="form-label" for="analysis_threshold">Score mínimo (50–100)</label>
+                                <input class="form-control" type="number" step="1" min="50" max="100"
+                                       id="analysis_threshold" name="analysis_threshold"
+                                       value="{{ "%.0f"|format(config.analysis_threshold) }}">
+                            </div>
+                            <div class="col-sm-6">
+                                <label class="form-label" for="risk_per_trade_pct">Risco por operação % (0,1–1)</label>
+                                <input class="form-control" type="number" step="0.1" min="0.1" max="1"
+                                       id="risk_per_trade_pct" name="risk_per_trade_pct"
+                                       value="{{ config.risk_per_trade_pct }}">
+                            </div>
+                            <div class="col-sm-6">
+                                <label class="form-label" for="max_daily_loss_pct">Perda diária máxima % (0,5–5)</label>
+                                <input class="form-control" type="number" step="0.1" min="0.5" max="5"
+                                       id="max_daily_loss_pct" name="max_daily_loss_pct"
+                                       value="{{ config.max_daily_loss_pct }}">
+                            </div>
+                            <div class="col-sm-6">
+                                <label class="form-label" for="max_consecutive_losses">Perdas seguidas (1–10)</label>
+                                <input class="form-control" type="number" step="1" min="1" max="10"
+                                       id="max_consecutive_losses" name="max_consecutive_losses"
+                                       value="{{ config.max_consecutive_losses }}">
+                            </div>
+                            <div class="col-sm-6">
+                                <label class="form-label" for="max_simultaneous_positions">Posições simultâneas (1–3)</label>
+                                <input class="form-control" type="number" step="1" min="1" max="3"
+                                       id="max_simultaneous_positions" name="max_simultaneous_positions"
+                                       value="{{ config.max_simultaneous_positions }}">
+                            </div>
+                            <div class="col-sm-6">
+                                <label class="form-label" for="max_trades_per_day">Operações por dia (1–50)</label>
+                                <input class="form-control" type="number" step="1" min="1" max="50"
+                                       id="max_trades_per_day" name="max_trades_per_day"
+                                       value="{{ config.max_trades_per_day }}">
+                            </div>
+                            <div class="col-sm-6">
+                                <label class="form-label" for="min_seconds_between_trades">Intervalo mínimo (s)</label>
+                                <input class="form-control" type="number" step="10" min="60" max="86400"
+                                       id="min_seconds_between_trades" name="min_seconds_between_trades"
+                                       value="{{ config.min_seconds_between_trades }}">
+                            </div>
+                            <div class="col-sm-6">
+                                <label class="form-label" for="max_spread_points">Spread máximo (pontos)</label>
+                                <input class="form-control" type="number" step="1" min="1" max="500"
+                                       id="max_spread_points" name="max_spread_points"
+                                       value="{{ config.max_spread_points }}">
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            </section>
+        </form>
+    </div>
+
+    <div class="col-xl-5">
+        <section class="card tp-sticky-settings mb-4">
+            <div class="card-header">
+                <i class="bi bi-list-check me-2"></i>O que o robô está fazendo
+                <span class="tp-pilot-updated ms-auto" id="robotUpdated">
+                    {%- if status.updated_at %}atualizado {{ status.updated_at[11:19] }} UTC{% else %}sem publicação{% endif -%}
+                </span>
+            </div>
+            <div class="card-body p-0">
+                <ul class="tp-timeline" id="robotActivities">
+                    {% for activity in status.activities|reverse %}
+                    <li class="tp-timeline-item level-{{ activity.level|lower }}">
+                        <span class="tp-timeline-time">{{ activity.at[11:19] }}</span>
+                        <span class="tp-timeline-message">{{ activity.message }}</span>
+                    </li>
+                    {% else %}
+                    <li class="tp-timeline-item level-info">
+                        <span class="tp-timeline-message">
+                            Nenhuma atividade ainda. Comece a operar para acompanhar aqui.
+                        </span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="card-header"><i class="bi bi-sliders me-2"></i>Ajuste fino</div>
+            <div class="card-body p-4">
+                <p class="small text-muted">
+                    Os limites de risco ficam no bloco "Limites de risco" ao lado.
+                    O motor de decisão e a conexão ficam nestas telas:
+                </p>
+                <div class="d-grid gap-2">
+                    <a class="btn btn-outline-light btn-sm" href="/dashboard/apexflow">
+                        <i class="bi bi-cpu me-2"></i>Motor ApexFlow AI
+                    </a>
+                    <a class="btn btn-outline-light btn-sm" href="/dashboard/mt5">
+                        <i class="bi bi-pc-display-horizontal me-2"></i>Conexão MT5
+                    </a>
+                    <a class="btn btn-outline-light btn-sm" href="/dashboard/mode">
+                        <i class="bi bi-toggle2-on me-2"></i>Modo do sistema ({{ current_mode }})
+                    </a>
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% include "dashboard/_robot_status_js.html" %}
+{% endblock %}

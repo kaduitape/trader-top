@@ -78,10 +78,20 @@ def test_recovery_from_emergency_stop_only_to_disabled() -> None:
         validate_transition(SystemMode.EMERGENCY_STOP, SystemMode.DATA_ONLY)
 
 
-@pytest.mark.parametrize("target", [SystemMode.REAL_LOCKED, SystemMode.REAL_ENABLED])
-def test_not_yet_implemented_modes_are_always_blocked(target: SystemMode) -> None:
+def test_real_locked_is_reachable_only_right_after_demo() -> None:
+    """REAL foi liberado por decisao explicita do dono do sistema; o que
+    continua valendo e a escada — nenhum degrau pode ser pulado."""
+    validate_transition(SystemMode.DEMO, SystemMode.REAL_LOCKED)  # nao levanta
+
     with pytest.raises(SystemModeError):
-        validate_transition(SystemMode.DEMO, target)
+        validate_transition(SystemMode.PAPER, SystemMode.REAL_LOCKED)
+
+
+def test_real_enabled_cannot_be_reached_by_skipping_real_locked() -> None:
+    validate_transition(SystemMode.REAL_LOCKED, SystemMode.REAL_ENABLED)  # nao levanta
+
+    with pytest.raises(SystemModeError):
+        validate_transition(SystemMode.DEMO, SystemMode.REAL_ENABLED)
 
 
 def test_transition_to_same_mode_is_rejected() -> None:

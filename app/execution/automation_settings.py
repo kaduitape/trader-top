@@ -20,6 +20,10 @@ TRADING_AUTOMATION_CONFIG_KEY = "trading_automation_config"
 
 _TIMEFRAME_CODES = frozenset(timeframe.value for timeframe in ANALYSIS_TIMEFRAMES)
 
+TRADING_MODE_DEMO = "DEMO"
+TRADING_MODE_REAL = "REAL"
+TRADING_MODES: frozenset[str] = frozenset({TRADING_MODE_DEMO, TRADING_MODE_REAL})
+
 ENGINE_PLAYBOOK = "playbook"
 ENGINE_APEXFLOW = "apexflow"
 ENGINES: frozenset[str] = frozenset({ENGINE_PLAYBOOK, ENGINE_APEXFLOW})
@@ -40,6 +44,15 @@ class TradingAutomationConfig:
     O piloto so pode tornar a operacao MAIS restritiva que a configuracao
     (score minimo maior, risco menor) — nunca mais frouxa; ver
     `app.execution.playbook`."""
+
+    mode: str = TRADING_MODE_DEMO
+    """`DEMO` ou `REAL` — em que tipo de conta o robô opera.
+
+    Escolha direta do operador, sem cerimônia de liberação. O que continua
+    valendo nos dois modos: a conta conectada precisa BATER com este valor
+    (`app.mt5.orders`), e o motor de risco mantém poder de veto sobre cada
+    sinal. Trocar de modo NÃO liga o robô — `enabled` é uma decisão
+    separada."""
 
     engine: str = ENGINE_PLAYBOOK
     """Qual cerebro decide a entrada:
@@ -111,9 +124,16 @@ def load_trading_automation_config(session: Session) -> TradingAutomationConfig:
     if engine not in ENGINES:
         engine = defaults.engine
 
+    # Valor desconhecido cai para DEMO: um erro de leitura nunca pode
+    # resultar em operar com dinheiro real.
+    mode = str(data.get("mode", defaults.mode)).strip().upper()
+    if mode not in TRADING_MODES:
+        mode = TRADING_MODE_DEMO
+
     return TradingAutomationConfig(
         enabled=bool(data.get("enabled", defaults.enabled)),
         autopilot=bool(data.get("autopilot", defaults.autopilot)),
+        mode=mode,
         engine=engine,
         symbol=symbol[:32],
         timeframe=timeframe,

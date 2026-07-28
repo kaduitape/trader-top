@@ -46,7 +46,11 @@ from app.database.repositories.candle_repository import CandleRepository
 from app.database.repositories.live_trade_repository import LiveTradeRepository
 from app.database.repositories.symbol_repository import SymbolRepository
 from app.database.repositories.system_setting_repository import get_current_mode
-from app.execution.automation_settings import ENGINE_APEXFLOW, TradingAutomationConfig
+from app.execution.automation_settings import (
+    ENGINE_APEXFLOW,
+    TRADING_MODE_REAL,
+    TradingAutomationConfig,
+)
 from app.execution.autopilot_status import (
     ActivityLevel,
     AutopilotPhase,
@@ -220,6 +224,7 @@ def _manage_position(
     broker_symbol: str,
     account: AccountSnapshot,
     risk_config: ApexFlowConfig,
+    allow_real_account: bool,
 ) -> str:
     """Aplica trailing stop / break-even na posicao aberta, se houver.
 
@@ -242,6 +247,7 @@ def _manage_position(
         account=account,
         symbol=broker_symbol,
         config=risk_config,
+        allow_real_account=allow_real_account,
     )
     if report.outcome == StopMoveOutcome.APPLIED:
         publisher.note(report.message, level=ActivityLevel.GOOD)
@@ -492,6 +498,7 @@ def _run_apexflow(
         model_version=decision.model_version,
         clock=lambda: now,
         scope_across_timeframes=True,
+        allow_real_account=config.mode == TRADING_MODE_REAL,
     )
     result = engine.step(execution_candles)
 
@@ -573,17 +580,28 @@ def run_autopilot_cycle(
     resolved_settings = settings or get_settings()
     resolved_now = (now or datetime.now(UTC)).astimezone(UTC)
 
-    if get_current_mode(session) != SystemMode.DEMO:
+    wants_real = config.mode == TRADING_MODE_REAL
+    required_mode = SystemMode.REAL_ENABLED if wants_real else SystemMode.DEMO
+    if get_current_mode(session) != required_mode:
         return _blocked(
             publisher,
-            "Pausado: o modo operacional precisa estar em DEMO.",
-            blocking_error="Automacao pausada: o modo operacional nao esta em DEMO.",
+            f"Pausado: o modo operacional precisa estar em {required_mode.value}.",
+            blocking_error=(
+                f"Automacao pausada: o modo operacional nao esta em {required_mode.value}."
+            ),
         )
-    if not account.is_demo:
+    # A conta conectada tem que BATER com o modo escolhido. Os dois sentidos
+    # sao recusados: real achando que e demo perde dinheiro, demo achando
+    # que e real invalida o resultado.
+    if account.is_demo == wants_real:
+        conectada = "demo" if account.is_demo else "REAL"
         return _blocked(
             publisher,
-            "Bloqueado: a conta conectada nao e demo — nenhuma ordem sera enviada.",
-            blocking_error="Automacao bloqueada: a conta MT5 conectada nao e demo.",
+            f"Bloqueado: modo {config.mode} escolhido, mas a conta conectada e "
+            f"{conectada} — nenhuma ordem sera enviada.",
+            blocking_error=(
+                f"Automacao bloqueada: modo {config.mode} com conta {conectada}."
+            ),
             level=ActivityLevel.ERROR,
         )
 
@@ -621,6 +639,7 @@ def run_autopilot_cycle(
         broker_symbol=broker_symbol,
         account=account,
         risk_config=risk_config,
+        allow_real_account=config.mode == TRADING_MODE_REAL,
     )
 
     trades_today, pnl_today = _daily_counters(session, symbol.id, now=resolved_now)
@@ -852,6 +871,7 @@ def run_autopilot_cycle(
         # volume, e os limites de risco precisam valer para o simbolo
         # inteiro, nao por timeframe.
         scope_across_timeframes=True,
+        allow_real_account=config.mode == TRADING_MODE_REAL,
     )
     result = engine.step(execution_candles)
     _record_closed_outcomes(session, tuple(result.events))

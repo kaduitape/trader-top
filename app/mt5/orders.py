@@ -1,11 +1,28 @@
-"""Leitura de ordens/historico e, a partir da Fase 11, envio de ordens a
-mercado — sempre em conta demo, nunca em conta real.
+"""Leitura de ordens/historico e envio de ordens a mercado.
 
 `send_market_order` e `modify_position` sao as UNICAS funcoes deste projeto
-autorizadas a chamar `client.order_send` — e as duas recusam
-incondicionalmente (levantam `MT5RealAccountError`, nunca apenas logam um
-aviso) se a conta conectada nao for demo (`AccountSnapshot.is_demo`). Esse
-bloqueio nao pode ser contornado por configuracao.
+autorizadas a chamar `client.order_send`.
+
+## A guarda: consistencia, nao proibicao
+
+As duas exigem `allow_real_account` — um booleano que vem do MODO
+CONFIGURADO pelo operador, nunca de um valor padrao conveniente. A regra e
+de CONSISTENCIA entre o que foi configurado e a conta que respondeu:
+
+| Modo configurado | Conta conectada | Resultado |
+|------------------|-----------------|-----------|
+| DEMO             | demo            | envia     |
+| DEMO             | **real**        | **recusa**|
+| REAL             | real            | envia     |
+| REAL             | demo            | recusa    |
+
+A linha que mais protege e a terceira: apontar para uma conta REAL achando
+que se esta em demo e o erro caro, e ele continua barrado — agora por
+divergencia, nao por proibicao geral. O inverso tambem e recusado, porque
+"liguei em real e o robo operou em demo a tarde inteira" tambem e um
+resultado errado, so que barato.
+
+Recusar levanta `MT5RealAccountError`, nunca apenas loga um aviso.
 
 `modify_position` altera APENAS stop-loss e take-profit de uma posicao que
 ja existe (`TRADE_ACTION_SLTP`). Nao abre, nao aumenta e nao fecha posicao —
@@ -147,10 +164,32 @@ class OrderSendResult:
     comment: str
 
 
+def _ensure_account_matches_mode(
+    account: AccountSnapshot, *, allow_real_account: bool, action: str
+) -> None:
+    """Recusa quando o tipo da conta diverge do modo configurado.
+
+    Os dois sentidos importam. Operar real achando que e demo perde
+    dinheiro; operar demo achando que e real perde a tarde e a confianca no
+    resultado. Nenhum dos dois passa em silencio.
+    """
+    if not allow_real_account and not account.is_demo:
+        raise MT5RealAccountError(
+            f"recusa {action}: modo DEMO configurado, mas a conta "
+            f"{account.login}@{account.server} e REAL."
+        )
+    if allow_real_account and account.is_demo:
+        raise MT5RealAccountError(
+            f"recusa {action}: modo REAL configurado, mas a conta "
+            f"{account.login}@{account.server} e demo."
+        )
+
+
 def send_market_order(
     client: MT5ClientProtocol,
     *,
     account: AccountSnapshot,
+    allow_real_account: bool = False,
     symbol: str,
     direction: SignalDirection,
     volume: float,
@@ -167,13 +206,10 @@ def send_market_order(
     reconciliação (`app.execution.engine`) apenas detecta quando isso já
     aconteceu, nunca tenta fechar a posição por conta própria.
 
-    Recusa incondicionalmente (`MT5RealAccountError`) se `account.is_demo`
-    for `False` — o único portão de segurança que não pode ser contornado
-    por nenhuma configuração ou argumento."""
-    if not account.is_demo:
-        raise MT5RealAccountError(
-            f"recusa enviar ordem: a conta {account.login}@{account.server} não é demo."
-        )
+`allow_real_account` precisa refletir o modo configurado: com `False`
+    (padrão), uma conta real é recusada; com `True`, uma conta demo é
+    recusada. Ver a tabela no topo do módulo."""
+    _ensure_account_matches_mode(account, allow_real_account=allow_real_account, action="enviar ordem")
 
     order_type = getattr(client, "ORDER_TYPE_BUY", _ORDER_TYPE_BUY_DEFAULT)
     if direction == SignalDirection.SHORT:
@@ -265,6 +301,7 @@ def modify_position(
     client: MT5ClientProtocol,
     *,
     account: AccountSnapshot,
+    allow_real_account: bool = False,
     symbol: str,
     position_ticket: int,
     stop_loss: float,
@@ -272,18 +309,17 @@ def modify_position(
 ) -> ModifyPositionResult:
     """Altera stop-loss/take-profit de uma posicao aberta (trailing/break-even).
 
-    Mesmo portao incondicional de `send_market_order`: conta que nao seja
-    demo levanta `MT5RealAccountError`, sem excecao e sem configuracao que
-    contorne.
+    Mesma guarda de consistencia de `send_market_order`: a conta conectada
+    precisa bater com o modo configurado, senao levanta
+    `MT5RealAccountError`.
 
     Usa `TRADE_ACTION_SLTP`, que por definicao da API do MetaTrader so
     consegue mexer nos niveis de protecao — nao existe caminho aqui para
     abrir, aumentar ou fechar posicao, nem por acidente.
     """
-    if not account.is_demo:
-        raise MT5RealAccountError(
-            f"recusa modificar posicao: a conta {account.login}@{account.server} não é demo."
-        )
+    _ensure_account_matches_mode(
+        account, allow_real_account=allow_real_account, action="modificar posicao"
+    )
 
     request = {
         "action": getattr(client, "TRADE_ACTION_SLTP", _TRADE_ACTION_SLTP_DEFAULT),

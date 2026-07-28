@@ -250,7 +250,7 @@ o último movimento de stop aplicado. Atualiza sozinho a cada 5 segundos.
 
 Marcar **"Usar o ApexFlow AI para decidir"** troca o cérebro do piloto
 automático. **Isso não liga o robô**: ligar continua exigindo os portões de
-`/dashboard/autopilot` (confirmação digitada, modo `DEMO`, conta demo).
+`/dashboard/trading` (modo `DEMO`/`REAL` compatível com a conta conectada).
 
 ### CLI
 

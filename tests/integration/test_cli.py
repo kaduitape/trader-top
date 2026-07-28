@@ -1162,9 +1162,10 @@ def test_cmd_mode_set_rejects_invalid_transition(capsys: pytest.CaptureFixture, 
     assert "ERRO" in captured.err
 
 
-def test_cmd_mode_set_rejects_not_yet_implemented_modes(
+def test_cmd_mode_set_rejects_jumping_straight_to_real(
     capsys: pytest.CaptureFixture, engine
 ) -> None:
+    """REAL existe, mas so no fim da escada: de DISABLED nao se chega la."""
     args = cli.build_parser().parse_args(["mode", "set", "REAL_ENABLED"])
     result = cli.cmd_mode_set(args)
     captured = capsys.readouterr()

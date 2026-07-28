@@ -18,8 +18,8 @@
     </a>
 
     <span class="tp-nav-label">Operações</span>
-    <a class="tp-nav-link {% if request.url.path.startswith('/dashboard/autopilot') %}active{% endif %}" href="/dashboard/autopilot">
-        <i class="bi bi-robot"></i><span>Piloto automático</span><span class="tp-nav-chip">LIVE</span>
+    <a class="tp-nav-link {% if request.url.path.startswith('/dashboard/trading') %}active{% endif %}" href="/dashboard/trading">
+        <i class="bi bi-robot"></i><span>Operar</span><span class="tp-nav-chip">LIVE</span>
     </a>
     <a class="tp-nav-link {% if request.url.path.startswith('/dashboard/apexflow') %}active{% endif %}" href="/dashboard/apexflow">
         <i class="bi bi-cpu-fill"></i><span>ApexFlow AI</span><span class="tp-nav-chip">IA</span>
@@ -28,7 +28,7 @@
         <i class="bi bi-journal-check"></i><span>Paper trading</span>
     </a>
     <a class="tp-nav-link {% if request.url.path == '/dashboard/live-trades' %}active{% endif %}" href="/dashboard/live-trades">
-        <i class="bi bi-broadcast-pin"></i><span>Conta demo</span>
+        <i class="bi bi-broadcast-pin"></i><span>Operações ao vivo</span>
     </a>
 
     <span class="tp-nav-label">Inteligência</span>
@@ -42,9 +42,6 @@
     <span class="tp-nav-label">Sistema</span>
     <a class="tp-nav-link {% if request.url.path == '/dashboard/mode' %}active{% endif %}" href="/dashboard/mode">
         <i class="bi bi-toggle2-on"></i><span>Modo operacional</span>
-    </a>
-    <a class="tp-nav-link {% if request.url.path == '/dashboard/settings/trading' %}active{% endif %}" href="/dashboard/settings/trading">
-        <i class="bi bi-sliders2-vertical"></i><span>Operações automáticas</span>
     </a>
     <a class="tp-nav-link {% if request.url.path == '/dashboard/settings/aisa' %}active{% endif %}" href="/dashboard/settings/aisa">
         <i class="bi bi-cloud-check"></i><span>MarketPulse</span>
