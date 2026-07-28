@@ -20,12 +20,17 @@ set` (maquina de estados do sistema) e `paper run`/`paper status` (paper
 trading incremental, nunca envia ordem real).
 
 A partir da Fase 11, `demo run`/`demo status` enviam ordens reais de
-mercado a uma conta DEMO (nunca real — `app.mt5.orders.send_market_order`
-recusa incondicionalmente qualquer conta que nao seja demo), passando
-por um motor de risco com poder de veto (`app.risk`) antes de qualquer
-envio. Exige o modo `DEMO` (`mode set DEMO`, so alcancavel apos `PAPER`).
-`REAL_LOCKED`/`REAL_ENABLED` continuam bloqueados incondicionalmente —
-ainda fora de escopo.
+mercado a uma conta DEMO — e continuam recusando qualquer conta que nao
+seja demo, porque chamam `app.mt5.orders.send_market_order` sem
+`allow_real_account`. Passam por um motor de risco com poder de veto
+(`app.risk`) antes de qualquer envio e exigem o modo `DEMO`
+(`mode set DEMO`, so alcancavel apos `PAPER`).
+
+`REAL_LOCKED`/`REAL_ENABLED` foram liberados por decisao explicita do
+dono do sistema e sao alcancaveis pela escada de modos (nunca pulando
+degraus). Operar em conta real e feito pela tela `/dashboard/trading`,
+escolhendo o modo REAL; a CLI nao tem um comando que envie ordem a conta
+real.
 
 A partir da Fase 13, `monitor model` compara um modelo registrado contra
 um dataset recente (drift de features via PSI, degradacao de calibracao/

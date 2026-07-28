@@ -404,8 +404,9 @@ Primeira vez que o sistema envia uma ordem real ao MetaTrader 5 — sempre
 contra uma conta **DEMO**, nunca uma conta real. Dois portões de
 segurança independentes: o modo do sistema precisa estar em `DEMO`
 (`mode set DEMO`, só alcançável após `PAPER`), e
-`app.mt5.orders.send_market_order` recusa incondicionalmente qualquer
-conta que não seja demo — verificado a cada iteração, não só uma vez.
+`app.mt5.orders.send_market_order` recusa qualquer conta que não seja
+demo (o executor de demo nunca pede `allow_real_account`) — verificado a
+cada iteração, não só uma vez.
 Entre os dois, um motor de risco com poder de veto (`app/risk`) aprova
 ou rejeita cada sinal, sempre com um motivo explícito. Ver
 `docs/execution.md` para o motor de risco, a máquina de estados de
@@ -431,7 +432,8 @@ aconteceu, nunca envia uma ordem de fechamento por conta própria.
 
 ## Piloto automático — escolha a moeda, o robô decide o resto
 
-Escolha um par em `/dashboard/autopilot`, ligue, e o robô passa a decidir
+Escolha um par em `/dashboard/trading`, escolha DEMO ou REAL, clique em
+*Começar a operar*, e o robô passa a decidir
 sozinho **como** operar: lê a sessão de negociação daquele par
 (`app/market/sessions.py`), compara o volume atual com a mediana histórica
 da **mesma hora** (`app/market/volume_profile.py`) e elege um dos
@@ -448,6 +450,14 @@ feed das últimas atividades. Se o worker parar de publicar, a tela mostra
 Duas invariantes de segurança, impostas por código e cobertas por teste: o
 **score mínimo nunca fica abaixo** do configurado (horário ruim só torna o
 robô mais exigente) e o **multiplicador de risco nunca passa de 1.0**.
+
+São dois tipos de operação, escolhidos na mesma tela: **DEMO** (dinheiro
+fictício) e **REAL** (dinheiro de verdade). Ligar exige que a conta
+conectada no MetaTrader seja **do mesmo tipo** do modo escolhido, nas duas
+direções — DEMO com conta real é recusado, e REAL com conta demo também —
+e um clique percorre a escada de modos do sistema inteira, auditada. O
+mesmo botão de *Começar a operar*, com o status ao vivo, aparece embutido
+em **Dados de mercado** e em **Análise PRO**.
 
 ```powershell
 python -m app.cli autopilot status
@@ -733,9 +743,9 @@ para as fases correspondentes.
   `CLOSE_PENDING` ativo (todo fechamento vem do stop-loss/take-profit
   anexado ao pedido original, nunca de uma decisão do sistema); sem
   múltiplos símbolos/estratégias numa única invocação de `demo run`.
-  `REAL_LOCKED`/`REAL_ENABLED` continuam bloqueados incondicionalmente —
-  exigem toda a confirmação manual multi-etapa do prompt mestre (seção
-  2), ainda fora de escopo. Ver `docs/execution.md`.
+  `demo run` continua exclusivo de conta demo; operar em conta real é
+  feito por `/dashboard/trading` escolhendo o modo REAL, sem comando de
+  CLI equivalente. Ver `docs/execution.md`.
 - Dashboard (Fase 12) é somente leitura, sem paginação de tabelas
   (limite fixo de 100 linhas), sem métricas de backtest/walk-forward
   persistidas (não existe uma tabela `backtest_runs` ainda) e sem
@@ -759,8 +769,12 @@ para as fases correspondentes.
   checagem falha — só saída/código de saída da CLI e as páginas do
   dashboard.
 - Fase 15 é a última do roteiro explícito de 15 fases do prompt mestre.
-  `REAL_LOCKED`/`REAL_ENABLED` permanecem bloqueados incondicionalmente
-  em todas as fases — a maquinaria de confirmação manual multi-etapa que
-  os tornaria seguros (chave de liberação, prazo de expiração, valor
-  máximo diário) não tem uma fase própria no roteiro original e não foi
-  implementada.
+  `REAL_LOCKED`/`REAL_ENABLED` foram liberados **por decisão explícita do
+  dono do sistema**, que escolheu um seletor DEMO/REAL simples em vez da
+  maquinaria de confirmação multi-etapa do prompt mestre (chave de
+  liberação, prazo de expiração, teto de perda diária) — essa maquinaria
+  não existe. O que protege a operação real hoje é: a escada de modos sem
+  atalhos, a coerência obrigatória entre modo e tipo de conta (nas duas
+  direções) e os limites de risco de `/dashboard/trading`. Não há teto de
+  perda que interrompa a conta real além do circuit breaker diário
+  configurado.

@@ -152,6 +152,14 @@ def enable_demo(db_session) -> None:
     db_session.flush()
 
 
+def enable_real(db_session) -> None:
+    """Leva o sistema ate REAL_ENABLED percorrendo a escada, como o painel faz."""
+    from app.database.repositories.system_setting_repository import activate_trading_mode
+
+    activate_trading_mode(db_session, SystemMode.REAL_ENABLED, reason="test")
+    db_session.flush()
+
+
 def run(db_session, *, now=NOW, config=None, account=DEMO_ACCOUNT, symbols=(SYMBOL,)):
     publisher = publisher_for(db_session)
     result = run_autopilot_cycle(
@@ -178,12 +186,41 @@ def test_blocks_when_system_mode_is_not_demo(db_session) -> None:
     assert status.phase == AutopilotPhase.BLOCKED.value
 
 
-def test_blocks_on_real_account_even_in_demo_mode(db_session) -> None:
+def test_demo_mode_refuses_a_real_account(db_session) -> None:
+    """O erro caro: achar que esta em demo e a conta ser real."""
     enable_demo(db_session)
     seed_full_market(db_session)
     result, _ = run(db_session, account=REAL_ACCOUNT)
     assert result.phase == AutopilotPhase.BLOCKED
-    assert "nao e demo" in (result.blocking_error or "")
+    assert "modo DEMO com conta REAL" in (result.blocking_error or "")
+
+
+def test_real_mode_refuses_a_demo_account(db_session) -> None:
+    """O sentido inverso tambem e recusado: "liguei em real e ele operou em
+    demo a tarde inteira" tambem e um resultado errado."""
+    from app.execution.automation_settings import TRADING_MODE_REAL
+
+    enable_real(db_session)
+    seed_full_market(db_session)
+    config = TradingAutomationConfig(
+        enabled=True, symbol=SYMBOL, mode=TRADING_MODE_REAL
+    )
+    result, _ = run(db_session, config=config, account=DEMO_ACCOUNT)
+    assert result.phase == AutopilotPhase.BLOCKED
+    assert "modo REAL com conta demo" in (result.blocking_error or "")
+
+
+def test_real_mode_requires_the_system_in_real_enabled(db_session) -> None:
+    from app.execution.automation_settings import TRADING_MODE_REAL
+
+    enable_demo(db_session)  # sistema em DEMO, config pedindo REAL
+    seed_full_market(db_session)
+    config = TradingAutomationConfig(
+        enabled=True, symbol=SYMBOL, mode=TRADING_MODE_REAL
+    )
+    result, _ = run(db_session, config=config, account=REAL_ACCOUNT)
+    assert result.phase == AutopilotPhase.BLOCKED
+    assert "REAL_ENABLED" in (result.blocking_error or "")
 
 
 def test_blocks_when_symbol_is_absent_from_broker(db_session) -> None:

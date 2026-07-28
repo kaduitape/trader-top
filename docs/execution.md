@@ -14,10 +14,14 @@ segurança independentes garantem isso:
 1. **Máquina de estados do sistema** (`app.core.system_mode`): o comando
    `demo run` só executa se o modo persistido for `DEMO` — e `DEMO` só é
    alcançável avançando um passo por vez a partir de `PAPER`.
-2. **`app.mt5.orders.send_market_order`**: recusa incondicionalmente
-   (`MT5RealAccountError`) qualquer chamada onde `AccountSnapshot.is_demo`
-   seja `False` — verificado de novo a cada iteração de `demo run`
-   (a conta pode mudar entre polls), não apenas uma vez no início.
+2. **`app.mt5.orders.send_market_order`**: recusa (`MT5RealAccountError`)
+   qualquer chamada onde `AccountSnapshot.is_demo` seja `False`, a menos
+   que quem chama passe `allow_real_account=True` — o que só acontece no
+   caminho de operação em modo REAL (`/dashboard/trading`). `demo run`
+   nunca passa esse argumento. A guarda vale nas duas direções: com
+   `allow_real_account=True`, uma conta **demo** também é recusada, para
+   que ninguém opere "real" contra uma conta que não é. Verificado de novo
+   a cada iteração (a conta pode mudar entre polls), não só no início.
 
 Entre esses dois portões fica o motor de risco (`app.risk`), com poder
 de veto sobre todo sinal — nenhuma ordem é sequer verificada

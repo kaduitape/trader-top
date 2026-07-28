@@ -15,6 +15,8 @@
     </a>
 </header>
 
+{% include "dashboard/_robot_status.html" %}
+
 <div class="tp-stat-grid">
     <div class="tp-stat-card">
         <span class="tp-stat-icon"><i class="bi bi-currency-exchange"></i></span>
@@ -47,6 +49,9 @@
                         <tr><th>Símbolo</th><th>Timeframe</th><th>Registros</th><th>Início</th><th>Última atualização</th><th></th></tr>
                     </thead>
                     <tbody>
+                    {# O botao de operar aparece uma vez por simbolo (o robo
+                       escolhe o timeframe sozinho), na primeira linha dele. #}
+                    {% set ns = namespace(symbol="") %}
                     {% for symbol_name, timeframe, count, first_open, last_open in candle_summary %}
                         <tr>
                             <td class="tp-symbol">{{ symbol_name }}</td>
@@ -54,7 +59,23 @@
                             <td>{{ "{:,}".format(count) }}</td>
                             <td class="text-muted">{{ first_open }}</td>
                             <td class="text-muted">{{ last_open }}</td>
-                            <td class="text-end"><a href="/dashboard/analysis?symbol={{ symbol_name }}&timeframe={{ timeframe }}" class="tp-market-action">Analisar</a></td>
+                            <td class="text-end">
+                                <div class="tp-row-actions">
+                                    <a href="/dashboard/analysis?symbol={{ symbol_name }}&timeframe={{ timeframe }}" class="tp-market-action">Analisar</a>
+                                    {% if ns.symbol != symbol_name %}
+                                    {% set ns.symbol = symbol_name %}
+                                    <form method="post" action="/dashboard/trading/quick">
+                                        <input type="hidden" name="origin" value="/dashboard/market-data">
+                                        <input type="hidden" name="symbol" value="{{ symbol_name }}">
+                                        <input type="hidden" name="mode" value="{{ config.mode }}">
+                                        <button class="tp-market-action is-primary" type="submit"
+                                                name="action" value="start">
+                                            <i class="bi bi-play-fill"></i>Operar
+                                        </button>
+                                    </form>
+                                    {% endif %}
+                                </div>
+                            </td>
                         </tr>
                     {% else %}
                         <tr><td colspan="6" class="tp-empty-row">Nenhum candle coletado. Sincronize um mercado para começar.</td></tr>
@@ -102,4 +123,8 @@
         O sistema nunca preenche lacunas com dados sintéticos.
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% include "dashboard/_robot_status_js.html" %}
 {% endblock %}

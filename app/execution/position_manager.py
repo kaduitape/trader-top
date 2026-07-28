@@ -82,6 +82,7 @@ def manage_open_position(
     account: AccountSnapshot,
     symbol: str,
     config: ApexFlowConfig,
+    allow_real_account: bool = False,
 ) -> StopMoveReport:
     """Avalia e, se for o caso, move o stop da posicao aberta `trade`.
 
@@ -158,6 +159,7 @@ def manage_open_position(
     result = modify_position(
         client,
         account=account,
+        allow_real_account=allow_real_account,
         symbol=symbol,
         position_ticket=trade.mt5_position_ticket,
         stop_loss=intent.new_stop_loss,

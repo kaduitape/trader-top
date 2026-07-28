@@ -79,6 +79,8 @@
         </div>
     </div>
 
+    {% include "dashboard/_robot_status.html" %}
+
     {% if error %}
     <div class="alert alert-danger d-flex gap-3 align-items-start" role="alert">
         <i class="bi bi-exclamation-octagon-fill fs-4"></i>
@@ -325,4 +327,8 @@
         Confirme custos, spread, calendário econômico e limites da conta antes de qualquer execução.
     </footer>
 </section>
+{% endblock %}
+
+{% block scripts %}
+{% include "dashboard/_robot_status_js.html" %}
 {% endblock %}

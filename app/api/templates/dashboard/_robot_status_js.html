@@ -1,0 +1,143 @@
+{#
+    Atualizacao ao vivo do bloco `_robot_status.html`.
+
+    Escreve apenas em ids que existem: o mesmo script serve a tela cheia de
+    operacao e aos widgets compactos de Dados de mercado / Analise PRO.
+#}
+<script>
+(function () {
+    const ENDPOINT = "/dashboard/trading/status";
+    const POLL_MS = 4000;
+
+    const node = (id) => document.getElementById(id);
+    const text = (id, value) => {
+        const target = node(id);
+        if (target) { target.textContent = value; }
+    };
+    const clock = (value) => String(value || "").slice(11, 19);
+
+    function reasonItem(reason, blocker) {
+        const item = document.createElement("li");
+        if (blocker) { item.className = "is-blocker"; }
+        const icon = document.createElement("i");
+        icon.className = blocker ? "bi bi-slash-circle" : "bi bi-dot";
+        item.append(icon, document.createTextNode(reason));
+        return item;
+    }
+
+    function renderActivities(activities) {
+        const list = node("robotActivities");
+        if (!list || !activities.length) { return; }
+        list.replaceChildren(...activities.map((activity) => {
+            const item = document.createElement("li");
+            item.className = "tp-timeline-item level-" +
+                String(activity.level || "info").toLowerCase();
+            const time = document.createElement("span");
+            time.className = "tp-timeline-time";
+            time.textContent = clock(activity.at);
+            const message = document.createElement("span");
+            message.className = "tp-timeline-message";
+            message.textContent = activity.message || "";
+            item.append(time, message);
+            return item;
+        }));
+    }
+
+    function renderReasons(data) {
+        const list = node("robotReasons");
+        if (!list) { return; }
+        const rows = [
+            ...(data.blockers || []).map((reason) => reasonItem(reason, true)),
+            ...(data.reasons || []).map((reason) => reasonItem(reason, false)),
+        ];
+        if (!rows.length) { return; }
+        list.replaceChildren(...rows);
+    }
+
+    function renderBlockers(data) {
+        const list = node("robotBlockers");
+        if (!list) { return; }
+        const blockers = data.blockers || [];
+        list.hidden = blockers.length === 0;
+        list.replaceChildren(...blockers.map((reason) => reasonItem(reason, true)));
+    }
+
+    function apply(data) {
+        const hero = node("robotHero");
+        if (hero) {
+            hero.classList.toggle("is-working", Boolean(data.working));
+            hero.classList.toggle("is-waiting", Boolean(data.enabled) && !data.working);
+        }
+
+        const phaseIcon = node("robotPhaseIcon");
+        if (phaseIcon) { phaseIcon.className = "bi " + data.phase_icon + " me-1"; }
+        const phase = node("robotPhase");
+        if (phase) {
+            phase.replaceChildren(
+                phaseIcon || document.createTextNode(""),
+                document.createTextNode(data.phase_label || "")
+            );
+        }
+
+        text("robotHeadline", data.headline);
+        text("robotDetail", data.detail);
+        text("robotSymbol", data.broker_symbol || data.symbol);
+        text("robotSession", data.active_sessions || "—");
+        text("robotVolume", data.volume_label || "—");
+        text("robotTrades", data.trades_today);
+        text("robotPnl", Number(data.pnl_today || 0).toFixed(2));
+        text("robotTimeframe", data.timeframe || "—");
+        text("robotScore", data.analysis_score === null ? "—" : Math.round(data.analysis_score));
+        text("robotStopManagement", data.stop_management || "—");
+        text("robotUpdated", data.updated_at
+            ? "atualizado " + clock(data.updated_at) + " UTC"
+            : "sem publicação");
+
+        const badge = node("robotModeBadge");
+        if (badge) {
+            badge.textContent = data.mode;
+            badge.classList.toggle("is-real", data.mode === "REAL");
+            badge.classList.toggle("is-demo", data.mode !== "REAL");
+        }
+
+        const playbook = node("robotPlaybook");
+        if (playbook) {
+            playbook.hidden = !data.playbook_label;
+            const icon = node("robotPlaybookIcon");
+            if (icon) { icon.className = "bi " + data.playbook_icon; }
+            text("robotPlaybookLabel", data.playbook_label);
+            text("robotPlaybookDescription", data.playbook_description);
+        }
+
+        const position = node("robotPosition");
+        if (position) {
+            position.hidden = !data.open_position;
+            text("robotPositionText", data.open_position);
+        }
+
+        document.querySelectorAll("[data-robot-start]").forEach((button) => {
+            button.disabled = !data.ready_to_start;
+        });
+        document.querySelectorAll("[data-robot-stop]").forEach((button) => {
+            button.disabled = !data.enabled;
+        });
+
+        renderActivities(data.activities || []);
+        renderReasons(data);
+        renderBlockers(data);
+    }
+
+    async function poll() {
+        try {
+            const response = await fetch(ENDPOINT, { headers: { "Accept": "application/json" } });
+            if (response.ok) { apply(await response.json()); }
+        } catch (error) {
+            // Falha de rede momentanea nao pode limpar a tela: o proximo ciclo
+            // tenta de novo e o carimbo de atualizacao denuncia a defasagem.
+        }
+    }
+
+    setInterval(poll, POLL_MS);
+    poll();
+})();
+</script>

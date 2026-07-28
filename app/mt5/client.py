@@ -8,9 +8,9 @@ nem envia uma ordem de verdade.
 
 `order_check`/`order_send` foram adicionados na Fase 11 (executor em
 conta demo) — a UNICA camada autorizada a chama-los e
-`app.mt5.orders.send_market_order`, que recusa incondicionalmente
-qualquer chamada quando a conta conectada nao e demo (`AccountSnapshot.
-is_demo`). `order_calc_margin`/`order_calc_profit` continuam fora do
+`app.mt5.orders.send_market_order`, que exige coerencia entre o tipo da
+conta conectada (`AccountSnapshot.is_demo`) e o modo configurado: sem
+`allow_real_account` recusa conta real, e com ele recusa conta demo. `order_calc_margin`/`order_calc_profit` continuam fora do
 escopo (sem consumidor concreto ainda).
 """
 
