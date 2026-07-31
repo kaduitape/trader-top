@@ -548,6 +548,18 @@ descobre o nome real, incluindo sufixos, e carrega a matriz
 `MN1/W1/D1/H4/H1/M30/M15/M5/M1` sem comandos.
 
 Configure o MarketPulse em **API AIsa** ou pela variável `AISA_API_KEY`.
+
+Cada análise consome **duas** chamadas da MarketPulse (notícias e
+fundamentos), e isso acontece a cada carregamento da tela de análise e a
+cada ciclo do piloto — não só quando o robô decide operar. Por isso a
+resposta boa fica em cache por moeda, dentro do processo, por
+`NEWS_CACHE_TTL_SECONDS` (padrão 10 minutos; `0` desliga). Duas regras
+que valem mais que a economia: **falha nunca entra no cache** — congelar
+uma instabilidade da API esconderia o problema por dez minutos — e a
+resposta reaproveitada **declara a própria idade** na tela, porque o
+sistema nunca apresenta dado velho como se fosse fresco. Ver
+`app/news/cache.py`.
+
 Ver `docs/dashboard.md` para autenticação, rotas e detalhes operacionais.
 
 ## Detecção de drift (Fase 13)

@@ -7,16 +7,45 @@ viram fatores neutros e explicitos, nunca dados fabricados.
 
 from __future__ import annotations
 
+from threading import Lock
+
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.database.repositories.system_setting_repository import SystemSettingRepository
 from app.news.aisa import AisaFundamentalsProvider, AisaMarketPulseClient, AisaNewsProvider
+from app.news.cache import (
+    AssessmentCache,
+    CachedFundamentalsProvider,
+    CachedNewsProvider,
+)
 from app.news.provider import FundamentalsProvider, NewsProvider
 from app.news.unconfigured import UnconfiguredFundamentalsProvider, UnconfiguredNewsProvider
 
 AISA_API_KEY_SETTING = "aisa_api_key"
 AISA_API_BASE_URL_SETTING = "aisa_api_base_url"
+
+# Um cache por processo, compartilhado por todas as requisicoes/ciclos: e o
+# que faz recarregar a tela de analise (ou rodar o piloto a cada 15s) parar
+# de virar uma chamada HTTP nova a cada vez.
+_CACHE: AssessmentCache | None = None
+_CACHE_LOCK = Lock()
+
+
+def get_assessment_cache(settings: Settings) -> AssessmentCache:
+    """Instancia unica, criada na primeira chamada com o TTL configurado."""
+    global _CACHE
+    with _CACHE_LOCK:
+        if _CACHE is None or _CACHE.ttl_seconds != settings.news_cache_ttl_seconds:
+            _CACHE = AssessmentCache(ttl_seconds=settings.news_cache_ttl_seconds)
+        return _CACHE
+
+
+def reset_assessment_cache() -> None:
+    """Descarta o cache — usado pelos testes e ao trocar a chave da API."""
+    global _CACHE
+    with _CACHE_LOCK:
+        _CACHE = None
 
 def _resolve_api_key(session: Session, settings: Settings) -> str | None:
     persisted = SystemSettingRepository(session).get(AISA_API_KEY_SETTING)
@@ -30,6 +59,12 @@ def _resolve_base_url(session: Session, settings: Settings) -> str | None:
     return persisted or settings.aisa_api_base_url
 
 
+def _namespace(session: Session, settings: Settings) -> str:
+    """Separa o cache por endpoint: trocar a URL da API nunca pode servir
+    resposta guardada do endpoint anterior."""
+    return _resolve_base_url(session, settings) or "default"
+
+
 def _client(session: Session, settings: Settings, api_key: str) -> AisaMarketPulseClient:
     return AisaMarketPulseClient(
         api_key=api_key,
@@ -40,12 +75,21 @@ def _client(session: Session, settings: Settings, api_key: str) -> AisaMarketPul
 def get_news_provider(session: Session, settings: Settings) -> NewsProvider:
     api_key = _resolve_api_key(session, settings)
     if not api_key:
+        # Sem chave nao existe chamada HTTP para economizar.
         return UnconfiguredNewsProvider()
-    return AisaNewsProvider(_client(session, settings, api_key))
+    return CachedNewsProvider(
+        AisaNewsProvider(_client(session, settings, api_key)),
+        get_assessment_cache(settings),
+        namespace=_namespace(session, settings),
+    )
 
 
 def get_fundamentals_provider(session: Session, settings: Settings) -> FundamentalsProvider:
     api_key = _resolve_api_key(session, settings)
     if not api_key:
         return UnconfiguredFundamentalsProvider()
-    return AisaFundamentalsProvider(_client(session, settings, api_key))
+    return CachedFundamentalsProvider(
+        AisaFundamentalsProvider(_client(session, settings, api_key)),
+        get_assessment_cache(settings),
+        namespace=_namespace(session, settings),
+    )

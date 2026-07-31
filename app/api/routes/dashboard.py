@@ -76,7 +76,12 @@ from app.mt5.sync_settings import (
     load_sync_status,
     save_sync_config,
 )
-from app.news.factory import AISA_API_BASE_URL_SETTING, AISA_API_KEY_SETTING
+from app.news.factory import (
+    AISA_API_BASE_URL_SETTING,
+    AISA_API_KEY_SETTING,
+    get_assessment_cache,
+    reset_assessment_cache,
+)
 from app.services.analysis_service import AnalysisReport, analyze_symbol
 
 router = APIRouter(tags=["dashboard"])
@@ -1317,6 +1322,7 @@ def dashboard_settings_aisa(
     error: str | None = None,
 ) -> HTMLResponse:
     settings = get_settings()
+    cache = get_assessment_cache(settings)
     repo = SystemSettingRepository(db)
     persisted_key = repo.get(AISA_API_KEY_SETTING)
     persisted_base_url = repo.get(AISA_API_BASE_URL_SETTING)
@@ -1333,6 +1339,9 @@ def dashboard_settings_aisa(
             "masked_key": _mask_api_key(effective_key) if effective_key else None,
             "key_source": key_source,
             "base_url": effective_base_url or "",
+            "cache_ttl_seconds": settings.news_cache_ttl_seconds,
+            "cache_hits": cache.hits,
+            "cache_misses": cache.misses,
             "saved": saved,
             "error": error,
         },
@@ -1387,4 +1396,7 @@ def dashboard_settings_aisa_save(
         user_id=user.id,
     )
     db.commit()
+    # Trocar a credencial invalida o que ja estava guardado: a proxima
+    # analise tem que falar com a API nova, nao repetir a resposta da antiga.
+    reset_assessment_cache()
     return RedirectResponse(url="/dashboard/settings/aisa?saved=1", status_code=303)

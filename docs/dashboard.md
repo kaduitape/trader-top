@@ -113,6 +113,14 @@ e não calcula entrada/stop/alvos. O MarketPulse usa os endpoints oficiais
 `/apis/v1/financial/news` e `/apis/v1/financial/financial-metrics`; respostas
 sem campos reconhecidos e falhas HTTP permanecem neutras e explícitas.
 
+Essas duas chamadas saem a cada análise — inclusive quando você apenas
+recarrega a tela, e a cada ciclo do piloto. Um cache por moeda
+(`app/news/cache.py`, prazo em `NEWS_CACHE_TTL_SECONDS`, padrão 10
+minutos) reaproveita a última resposta **boa**; falhas passam direto toda
+vez, e a resposta vinda do cache carrega `[cache MarketPulse: Ns]` na
+própria justificativa exibida. O estado do cache — prazo e quantas
+chamadas foram poupadas — aparece em `/dashboard/settings/aisa`.
+
 `PaperTradeRepository.list_all_recent`/`LiveTradeRepository.
 list_all_recent` (novos nesta fase) fazem um `JOIN` com `symbols` para
 resolver o nome do símbolo numa única query — evita N+1 queries ao

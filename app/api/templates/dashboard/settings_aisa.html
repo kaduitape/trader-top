@@ -33,7 +33,30 @@
                     <div><dt>Credencial</dt><dd><code>{{ masked_key }}</code></dd></div>
                     <div><dt>Origem</dt><dd>{{ "Dashboard seguro" if key_source == "dashboard" else "Variável de ambiente" }}</dd></div>
                     <div><dt>URL base</dt><dd class="text-break">{{ base_url }}</dd></div>
+                    <div>
+                        <dt>Cache</dt>
+                        <dd>
+                            {%- if cache_ttl_seconds > 0 -%}
+                            {{ "%.0f"|format(cache_ttl_seconds / 60) }} min por moeda
+                            {%- else -%}
+                            desligado
+                            {%- endif -%}
+                        </dd>
+                    </div>
+                    <div>
+                        <dt>Chamadas poupadas</dt>
+                        <dd>{{ cache_hits }} de {{ cache_hits + cache_misses }}</dd>
+                    </div>
                 </dl>
+                <div class="tp-context-note mt-3">
+                    <i class="bi bi-piggy-bank"></i>
+                    <div>
+                        Cada análise consome <strong>duas</strong> chamadas (notícias e
+                        fundamentos). Uma resposta boa é reaproveitada pelo prazo acima, por
+                        moeda — recarregar a tela de análise deixou de gastar cota. Falha
+                        nunca é guardada, e a resposta reaproveitada informa a própria idade.
+                    </div>
+                </div>
                 {% endif %}
             </div>
         </div>

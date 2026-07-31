@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     aisa_api_key: str | None = None
     aisa_api_base_url: str | None = None
 
+    # Cada analise consome duas chamadas da MarketPulse (noticias +
+    # fundamentos). O sentimento agregado das ultimas manchetes nao muda a
+    # cada segundo, entao a resposta boa e reaproveitada por este prazo.
+    # Zero desliga o cache. Ver app/news/cache.py.
+    news_cache_ttl_seconds: float = 600.0
+
     # --- Motor de analise Price Action / SMC / multi-timeframe (Fase 18) --------
     analysis_default_timeframe: str = "M15"
     analysis_default_threshold: float = 90.0
