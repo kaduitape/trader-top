@@ -59,6 +59,7 @@ from app.market.volume_analysis import detect_volume_events
 from app.mt5.market_data import Timeframe
 from app.news.factory import get_fundamentals_provider, get_news_provider
 from app.news.provider import FundamentalsProvider, NewsProvider, ProviderStatus
+from app.news.unconfigured import skipped_fundamentals, skipped_news
 from app.strategies.base import SignalDirection
 
 _MISSING_HIGHER_TIMEFRAME_PENALTY_PER_TF = 5.0
@@ -92,6 +93,55 @@ def _timeframe_trend_label(snapshot: MultiTimeframeSnapshot, timeframe: Timefram
         return "SEM_DADOS"
 
 
+_MIN_VOLUME_SCORE = 60.0
+
+# Quantas barras exigir de cada timeframe. Os operacionais (o de entrada e
+# os dois imediatamente acima) precisam das features completas — e neles que
+# a decisao acontece. Os de contexto macro so precisam existir em quantidade
+# util para dizer a direcao: exigir 200 candles mensais seriam 16 ANOS de
+# historico, que corretora nenhuma entrega e que bloqueava o sistema para
+# sempre.
+_CONTEXT_MIN_BARS = 30
+
+
+def _coverage_blockers(
+    snapshot: MultiTimeframeSnapshot, *, primary_timeframe: Timeframe
+) -> list[str]:
+    """Cobertura insuficiente para decidir, em linguagem acionavel.
+
+    Verificacao 100% local: roda antes de qualquer chamada paga.
+    """
+    index = ANALYSIS_TIMEFRAMES.index(primary_timeframe)
+    # O de entrada e os dois acima dele (ou o que houver).
+    operational = ANALYSIS_TIMEFRAMES[max(0, index - 2) : index + 1]
+
+    blockers: list[str] = []
+
+    incompletos = [
+        tf.value
+        for tf in operational
+        if (tf_snapshot := snapshot.get(tf)) is None or not tf_snapshot.is_sufficient
+    ]
+    if incompletos:
+        blockers.append(
+            "Cobertura insuficiente nos timeframes operacionais "
+            f"({', '.join(incompletos)}) — colete mais candles antes de operar."
+        )
+
+    sem_contexto = [
+        tf.value
+        for tf in ANALYSIS_TIMEFRAMES[: max(0, index - 2)]
+        if (tf_snapshot := snapshot.get(tf)) is None
+        or tf_snapshot.bars_available < _CONTEXT_MIN_BARS
+    ]
+    if sem_contexto:
+        blockers.append(
+            f"Contexto macro ausente ({', '.join(sem_contexto)}): menos de "
+            f"{_CONTEXT_MIN_BARS} candles coletados."
+        )
+    return blockers
+
+
 def analyze_symbol(
     session: Session,
     *,
@@ -102,6 +152,8 @@ def analyze_symbol(
     news_provider: NewsProvider | None = None,
     fundamentals_provider: FundamentalsProvider | None = None,
     now: datetime | None = None,
+    enforce_gates: bool = True,
+    as_of: datetime | None = None,
 ) -> AnalysisReport:
     """Analisa `symbol` no `primary_timeframe`, com contexto dos demais
     timeframes (`ANALYSIS_TIMEFRAMES`) para alinhamento de tendencia.
@@ -116,7 +168,11 @@ def analyze_symbol(
     settings = get_settings()
 
     snapshot = build_multi_timeframe_snapshot(
-        session, symbol=symbol, timeframes=ANALYSIS_TIMEFRAMES, now=resolved_now
+        session,
+        symbol=symbol,
+        timeframes=ANALYSIS_TIMEFRAMES,
+        now=resolved_now,
+        as_of=as_of,
     )
 
     primary = snapshot.get(primary_timeframe)
@@ -195,14 +251,42 @@ def analyze_symbol(
     liquidity_factor = score_liquidity(order_blocks, fvgs, sweeps, pd_zone)
     volume_factor = score_volume(volume_events)
 
-    resolved_news_provider = news_provider or get_news_provider(session, settings)
-    resolved_fundamentals_provider = fundamentals_provider or get_fundamentals_provider(
-        session, settings
-    )
-    news_assessment = resolved_news_provider.fetch_assessment(symbol, now=resolved_now)
-    fundamentals_assessment = resolved_fundamentals_provider.fetch_assessment(
-        symbol, now=resolved_now
-    )
+    # ------------------------------------------------------------------
+    # Portoes locais ANTES da API paga.
+    #
+    # Cobertura e volume sao verificados com dados que ja estao no banco,
+    # de graca. Consultar a MarketPulse para so entao descobrir que a
+    # entrada ja estava bloqueada era queimar credito por analise
+    # natimorta — foi exatamente o que esgotou a cota do usuario.
+    # ------------------------------------------------------------------
+    local_block_reasons: list[str] = []
+    if enforce_gates:
+        local_block_reasons.extend(
+            _coverage_blockers(snapshot, primary_timeframe=primary_timeframe)
+        )
+        if volume_factor.raw_score < _MIN_VOLUME_SCORE:
+            local_block_reasons.append(
+                f"Volume nao favoravel (score {volume_factor.raw_score:.1f}, "
+                f"minimo {_MIN_VOLUME_SCORE:.0f})."
+            )
+
+    if local_block_reasons:
+        motivo = (
+            "MarketPulse nao consultada: a entrada ja estava bloqueada por "
+            "verificacao local (economia de cota)."
+        )
+        news_assessment = skipped_news(motivo)
+        fundamentals_assessment = skipped_fundamentals(motivo)
+    else:
+        resolved_news_provider = news_provider or get_news_provider(session, settings)
+        resolved_fundamentals_provider = fundamentals_provider or get_fundamentals_provider(
+            session, settings
+        )
+        news_assessment = resolved_news_provider.fetch_assessment(symbol, now=resolved_now)
+        fundamentals_assessment = resolved_fundamentals_provider.fetch_assessment(
+            symbol, now=resolved_now
+        )
+
     news_factor = score_news(news_assessment)
     fundamentals_factor = score_fundamentals(fundamentals_assessment)
     correlation_factor = score_correlation()
@@ -222,22 +306,11 @@ def analyze_symbol(
         threshold=threshold,
     )
 
-    # No modo operacional (threshold profissional >= 90), score alto sozinho
-    # nao basta. Cobertura completa, fontes externas verificadas, volume
-    # favoravel e ausencia de evento HIGH iminente sao gates obrigatorios.
-    # Thresholds menores continuam disponiveis para pesquisa/backtest.
-    hard_block_reasons: list[str] = []
-    if threshold >= 90.0:
-        missing_timeframes = [
-            tf.value
-            for tf in ANALYSIS_TIMEFRAMES
-            if snapshot.get(tf) is None or not snapshot.get(tf).is_sufficient  # type: ignore[union-attr]
-        ]
-        if missing_timeframes:
-            hard_block_reasons.append(
-                "Cobertura obrigatoria incompleta nos nove timeframes: "
-                f"{', '.join(missing_timeframes)}."
-            )
+    # Portoes que dependem da resposta externa. Os locais ja rodaram acima;
+    # aqui so entram os que exigem a API — e apenas quando ela foi de fato
+    # consultada, para nao transformar uma economia deliberada em bloqueio.
+    hard_block_reasons: list[str] = list(local_block_reasons)
+    if enforce_gates and not local_block_reasons:
         if news_assessment.status != ProviderStatus.OK:
             hard_block_reasons.append(
                 "Noticias/calendario sem confirmacao valida; entrada bloqueada por seguranca."
@@ -245,10 +318,6 @@ def analyze_symbol(
         if fundamentals_assessment.status != ProviderStatus.OK:
             hard_block_reasons.append(
                 "Fundamentos/macro sem confirmacao valida; entrada bloqueada por seguranca."
-            )
-        if volume_factor.raw_score < 60.0:
-            hard_block_reasons.append(
-                f"Volume nao favoravel (score {volume_factor.raw_score:.1f}, minimo 60)."
             )
 
         high_impact_deadline = resolved_now + timedelta(minutes=60)
@@ -261,15 +330,15 @@ def analyze_symbol(
                 "Noticia de alto impacto prevista para os proximos 60 minutos."
             )
 
-        if hard_block_reasons:
-            score = replace(
-                score,
-                recommendation="DO_NOT_ENTER",
-                reasons_below_threshold=[
-                    *score.reasons_below_threshold,
-                    *hard_block_reasons,
-                ],
-            )
+    if hard_block_reasons:
+        score = replace(
+            score,
+            recommendation="DO_NOT_ENTER",
+            reasons_below_threshold=[
+                *score.reasons_below_threshold,
+                *hard_block_reasons,
+            ],
+        )
 
     confluences: list[str] = []
     for event in events:

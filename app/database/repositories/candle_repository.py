@@ -76,12 +76,28 @@ class CandleRepository:
         row = self._session.execute(stmt).first()
         return as_aware_utc(row[0]) if row is not None else None
 
-    def get_recent(self, symbol_id: int, timeframe: str, limit: int) -> list[Candle]:
+    def get_recent(
+        self,
+        symbol_id: int,
+        timeframe: str,
+        limit: int,
+        *,
+        as_of: datetime | None = None,
+    ) -> list[Candle]:
         """Retorna as `limit` candles mais recentes, em ordem cronologica
-        crescente (para que checagens de gap/ordem facam sentido)."""
+        crescente (para que checagens de gap/ordem facam sentido).
+
+        `as_of` limita a leitura ao que existia naquele instante. Sem isso
+        nao existe analise ponto-no-tempo: qualquer varredura historica
+        reanalisaria sempre a ultima janela e devolveria o mesmo resultado
+        repetido — foi exatamente o que a calibracao expos.
+        """
+        conditions = [Candle.symbol_id == symbol_id, Candle.timeframe == timeframe]
+        if as_of is not None:
+            conditions.append(Candle.open_time <= as_of)
         stmt = (
             select(Candle)
-            .where(Candle.symbol_id == symbol_id, Candle.timeframe == timeframe)
+            .where(*conditions)
             .order_by(desc(Candle.open_time))
             .limit(limit)
         )

@@ -14,13 +14,19 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.database.repositories.system_setting_repository import SystemSettingRepository
 from app.news.aisa import AisaFundamentalsProvider, AisaMarketPulseClient, AisaNewsProvider
+from app.news.budget import BudgetedProvider, read_usage
 from app.news.cache import (
     AssessmentCache,
     CachedFundamentalsProvider,
     CachedNewsProvider,
 )
 from app.news.provider import FundamentalsProvider, NewsProvider
-from app.news.unconfigured import UnconfiguredFundamentalsProvider, UnconfiguredNewsProvider
+from app.news.unconfigured import (
+    UnconfiguredFundamentalsProvider,
+    UnconfiguredNewsProvider,
+    skipped_fundamentals,
+    skipped_news,
+)
 
 AISA_API_KEY_SETTING = "aisa_api_key"
 AISA_API_BASE_URL_SETTING = "aisa_api_base_url"
@@ -77,8 +83,15 @@ def get_news_provider(session: Session, settings: Settings) -> NewsProvider:
     if not api_key:
         # Sem chave nao existe chamada HTTP para economizar.
         return UnconfiguredNewsProvider()
+    # Ordem importa: cache por fora (acerto nao gasta orcamento), teto
+    # diario por dentro (so requisicao real conta).
     return CachedNewsProvider(
-        AisaNewsProvider(_client(session, settings, api_key)),
+        BudgetedProvider(
+            AisaNewsProvider(_client(session, settings, api_key)),
+            limit=settings.news_daily_call_budget,
+            skipped_factory=skipped_news,
+            kind="noticias",
+        ),
         get_assessment_cache(settings),
         namespace=_namespace(session, settings),
     )
@@ -89,7 +102,17 @@ def get_fundamentals_provider(session: Session, settings: Settings) -> Fundament
     if not api_key:
         return UnconfiguredFundamentalsProvider()
     return CachedFundamentalsProvider(
-        AisaFundamentalsProvider(_client(session, settings, api_key)),
+        BudgetedProvider(
+            AisaFundamentalsProvider(_client(session, settings, api_key)),
+            limit=settings.news_daily_call_budget,
+            skipped_factory=skipped_fundamentals,
+            kind="fundamentos",
+        ),
         get_assessment_cache(settings),
         namespace=_namespace(session, settings),
     )
+
+
+def get_budget_usage(session: Session, settings: Settings):
+    """Consumo do dia, para o painel mostrar quanto ainda resta."""
+    return read_usage(session, limit=settings.news_daily_call_budget)

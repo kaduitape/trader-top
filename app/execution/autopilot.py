@@ -60,6 +60,7 @@ from app.execution.autopilot_strategy import (
     AUTOPILOT_STRATEGY_NAME,
     PlaybookConfluenceStrategy,
 )
+from app.execution.blocker_stats import record_cycle
 from app.execution.engine import (
     DemoExecutionEngine,
     DemoExecutionEvent,
@@ -937,6 +938,15 @@ def run_autopilot_cycle(
         **market_fields,
         **playbook_fields,
         **analysis_fields,
+    )
+
+    # Contabiliza o ciclo (com ou sem bloqueio) para o relatorio do dia:
+    # um motivo presente em 100% dos ciclos e configuracao para corrigir,
+    # nao mercado desfavoravel.
+    record_cycle(
+        session,
+        blockers=list(report.rejection_reasons) if report.recommendation != "ENTER" else [],
+        now=resolved_now,
     )
 
     return AutopilotCycleResult(

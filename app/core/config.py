@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     # Zero desliga o cache. Ver app/news/cache.py.
     news_cache_ttl_seconds: float = 600.0
 
+    # Teto DURO de chamadas por dia UTC, compartilhado entre o servidor web e
+    # o conector Windows. O cache evita repeticao; isto evita surpresa. Ao
+    # atingir o limite, noticias/fundamentos saem do calculo em vez de
+    # gastar mais. Zero = sem limite.
+    news_daily_call_budget: int = 300
+
     # --- Motor de analise Price Action / SMC / multi-timeframe (Fase 18) --------
     analysis_default_timeframe: str = "M15"
     analysis_default_threshold: float = 90.0

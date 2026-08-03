@@ -117,6 +117,41 @@ def _seed_timeframe(
     db_session.flush()
 
 
+def _seed_full_coverage(db_session, symbol_name: str) -> None:
+    """Semeia o que os portoes locais exigem de verdade.
+
+    Operacionais (H1/M30/M15 quando a entrada e no M15): features completas.
+    Contexto macro (MN1/W1/D1/H4): apenas presenca minima — exigir 200
+    candles mensais seria exigir 16 anos de historico.
+    """
+    for timeframe, quantidade, passo in (
+        (Timeframe.MN1, 40, timedelta(days=30)),
+        (Timeframe.W1, 40, timedelta(days=7)),
+        (Timeframe.D1, 40, timedelta(days=1)),
+        (Timeframe.H4, 40, timedelta(hours=4)),
+        (Timeframe.H1, 260, timedelta(hours=1)),
+        (Timeframe.M30, 260, timedelta(minutes=30)),
+        (Timeframe.M15, 260, timedelta(minutes=15)),
+    ):
+        candles = _make_uptrend_candles(
+            quantidade, start=_NOW - passo * quantidade, step=passo
+        )
+        _seed_timeframe(db_session, symbol_name, timeframe, candles)
+
+
+class _CountingNewsProvider:
+    """Conta consultas — e o que prova a economia de cota."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fetch_assessment(self, symbol: str, *, now: datetime) -> NewsAssessment:
+        self.calls += 1
+        return NewsAssessment(
+            status=ProviderStatus.OK, score_contribution=100.0, message="noticia forte"
+        )
+
+
 class _FakeNewsProvider:
     def fetch_assessment(self, symbol: str, *, now: datetime) -> NewsAssessment:
         return NewsAssessment(
@@ -137,10 +172,10 @@ def test_unknown_symbol_propagates_symbol_not_found(db_session) -> None:
 
 
 def test_clean_uptrend_produces_enter_recommendation(db_session) -> None:
-    candles = _make_uptrend_candles(
-        260, start=_NOW - timedelta(minutes=260), step=timedelta(minutes=1)
-    )
-    _seed_timeframe(db_session, "ANALYSIS_UPTREND", Timeframe.M15, candles)
+    """Caminho completo: com cobertura real e fontes externas respondendo,
+    o sistema CONSEGUE chegar a ENTER — passando pelos portoes, nao
+    contornando-os."""
+    _seed_full_coverage(db_session, "ANALYSIS_UPTREND")
 
     report = analyze_symbol(
         db_session,
@@ -213,7 +248,7 @@ def test_only_lower_timeframes_collected_never_raises_and_shows_gap(db_session) 
         "Cobertura multi-timeframe incompleta" in line for line in structure_factor.rationale
     )
     assert report.recommendation == "DO_NOT_ENTER"
-    assert any("nove timeframes" in reason for reason in report.rejection_reasons)
+    assert any("Cobertura insuficiente" in reason for reason in report.rejection_reasons)
     assert report.trade_levels is None
 
 
@@ -230,6 +265,7 @@ def test_injected_fake_providers_are_reflected_in_score(db_session) -> None:
         news_provider=_FakeNewsProvider(),
         fundamentals_provider=_FakeFundamentalsProvider(),
         now=_NOW,
+        enforce_gates=False,
     )
 
     news_factor = next(f for f in report.score.factors if f.name == "news")
@@ -259,10 +295,13 @@ def test_custom_weights_are_used(db_session) -> None:
         primary_timeframe=Timeframe.M15,
         weights=weights,
         now=_NOW,
+        enforce_gates=False,
     )
 
     structure_factor = next(f for f in report.score.factors if f.name == "structure")
-    assert structure_factor.weight == pytest.approx(0.7)
+    # Fundamentos tem peso zero e correlacao nunca tem dado; o peso util e
+    # redistribuido, entao estrutura fica acima dos 0.7 nominais.
+    assert structure_factor.weight > 0.7
 
 
 def test_direction_is_long_for_bullish_latest_event(db_session) -> None:
@@ -284,3 +323,83 @@ def test_direction_is_long_for_bullish_latest_event(db_session) -> None:
     if report.trade_levels is not None:
         # Serie de alta -- stop deve ficar abaixo da entrada (LONG).
         assert report.trade_levels.stop_loss < report.trade_levels.entry
+
+
+def test_api_is_not_consulted_when_a_local_gate_already_blocks(db_session) -> None:
+    """A economia que faltava: sem cobertura, a entrada ja esta decidida —
+    pagar pela MarketPulse para descobrir isso depois era queimar cota."""
+    candles = _make_uptrend_candles(
+        260, start=_NOW - timedelta(minutes=260), step=timedelta(minutes=1)
+    )
+    _seed_timeframe(db_session, "ANALYSIS_NO_CALL", Timeframe.M15, candles)
+    provider = _CountingNewsProvider()
+
+    report = analyze_symbol(
+        db_session,
+        symbol="ANALYSIS_NO_CALL",
+        primary_timeframe=Timeframe.M15,
+        news_provider=provider,
+        fundamentals_provider=_FakeFundamentalsProvider(),
+        now=_NOW,
+    )
+
+    assert provider.calls == 0
+    assert report.recommendation == "DO_NOT_ENTER"
+    news_factor = next(f for f in report.score.factors if f.name == "news")
+    assert news_factor.has_data is False
+    assert "nao consultada" in news_factor.rationale[0]
+
+
+def test_api_is_consulted_when_the_local_gates_pass(db_session) -> None:
+    _seed_full_coverage(db_session, "ANALYSIS_CALL_OK")
+    provider = _CountingNewsProvider()
+
+    analyze_symbol(
+        db_session,
+        symbol="ANALYSIS_CALL_OK",
+        primary_timeframe=Timeframe.M15,
+        news_provider=provider,
+        fundamentals_provider=_FakeFundamentalsProvider(),
+        now=_NOW,
+    )
+
+    assert provider.calls == 1
+
+
+def test_a_factor_without_data_is_left_out_instead_of_scoring_fifty(db_session) -> None:
+    """Correlacao nunca foi implementada. Antes ela valia 50 e derrubava o
+    score total; agora sai da conta e o peso vai para quem tem dado."""
+    _seed_full_coverage(db_session, "ANALYSIS_NO_DATA_FACTOR")
+
+    report = analyze_symbol(
+        db_session,
+        symbol="ANALYSIS_NO_DATA_FACTOR",
+        primary_timeframe=Timeframe.M15,
+        news_provider=_FakeNewsProvider(),
+        fundamentals_provider=_FakeFundamentalsProvider(),
+        now=_NOW,
+    )
+
+    correlation = next(f for f in report.score.factors if f.name == "correlation")
+    assert correlation.has_data is False
+    assert correlation.weight == 0.0
+    assert correlation.weighted_contribution == 0.0
+    # O peso util continua somando 100%: nada se perde no caminho.
+    assert sum(f.weight for f in report.score.factors) == pytest.approx(1.0)
+
+
+def test_the_macro_context_does_not_require_sixteen_years_of_history(db_session) -> None:
+    """MN1 com 200 candles seriam 16 anos. O portao exige presenca util,
+    nao um historico que corretora nenhuma entrega."""
+    _seed_full_coverage(db_session, "ANALYSIS_SHALLOW_MACRO")
+
+    report = analyze_symbol(
+        db_session,
+        symbol="ANALYSIS_SHALLOW_MACRO",
+        primary_timeframe=Timeframe.M15,
+        news_provider=_FakeNewsProvider(),
+        fundamentals_provider=_FakeFundamentalsProvider(),
+        now=_NOW,
+    )
+
+    assert not any("Contexto macro ausente" in reason for reason in report.rejection_reasons)

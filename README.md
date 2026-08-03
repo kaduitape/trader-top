@@ -550,8 +550,18 @@ descobre o nome real, incluindo sufixos, e carrega a matriz
 Configure o MarketPulse em **API AIsa** ou pela variável `AISA_API_KEY`.
 
 Cada análise consome **duas** chamadas da MarketPulse (notícias e
-fundamentos), e isso acontece a cada carregamento da tela de análise e a
-cada ciclo do piloto — não só quando o robô decide operar. Por isso a
+fundamentos). Três camadas protegem a cota, nesta ordem:
+
+1. **Os portões locais rodam antes da API.** Cobertura de dados e volume são
+   verificados com o que já está no banco; se a entrada já está bloqueada, a
+   MarketPulse **não é consultada** — era isso que queimava crédito em
+   análise natimorta.
+2. **Cache por moeda** (`NEWS_CACHE_TTL_SECONDS`, padrão 10 min).
+3. **Teto diário** (`NEWS_DAILY_CALL_BUDGET`, padrão 300), contado no banco e
+   compartilhado entre o servidor web e o conector Windows. Ao atingir o
+   limite, os fatores externos saem do cálculo em vez de gastar mais.
+
+O consumo do dia aparece em `/dashboard/settings/aisa`. Por isso a
 resposta boa fica em cache por moeda, dentro do processo, por
 `NEWS_CACHE_TTL_SECONDS` (padrão 10 minutos; `0` desliga). Duas regras
 que valem mais que a economia: **falha nunca entra no cache** — congelar

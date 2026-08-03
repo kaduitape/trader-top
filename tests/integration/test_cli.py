@@ -1664,6 +1664,10 @@ def test_cmd_analysis_run_enters_on_clean_uptrend(
             "M15",
             "--threshold",
             "40.0",
+            # Este teste cobre a leitura do relatorio, nao a cobertura de
+            # dados: so o M15 e semeado, e os portoes (independentes do
+            # limiar) barrariam antes de chegar ao texto.
+            "--no-gates",
         ]
     )
     result = cli.cmd_analysis_run(args)

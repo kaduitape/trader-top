@@ -113,13 +113,53 @@ e não calcula entrada/stop/alvos. O MarketPulse usa os endpoints oficiais
 `/apis/v1/financial/news` e `/apis/v1/financial/financial-metrics`; respostas
 sem campos reconhecidos e falhas HTTP permanecem neutras e explícitas.
 
-Essas duas chamadas saem a cada análise — inclusive quando você apenas
-recarrega a tela, e a cada ciclo do piloto. Um cache por moeda
-(`app/news/cache.py`, prazo em `NEWS_CACHE_TTL_SECONDS`, padrão 10
-minutos) reaproveita a última resposta **boa**; falhas passam direto toda
-vez, e a resposta vinda do cache carrega `[cache MarketPulse: Ns]` na
-própria justificativa exibida. O estado do cache — prazo e quantas
-chamadas foram poupadas — aparece em `/dashboard/settings/aisa`.
+### Como a cota é protegida
+
+As duas chamadas só acontecem quando fazem diferença. Em ordem:
+
+1. **Portões locais primeiro** (`app/services/analysis_service.py`):
+   cobertura de dados e volume mínimo são avaliados com o que já está no
+   banco. Se a entrada já está bloqueada por um deles, a MarketPulse **não
+   é consultada** e os fatores externos entram como `SKIPPED`.
+2. **Cache por moeda** (`app/news/cache.py`, `NEWS_CACHE_TTL_SECONDS`,
+   padrão 10 min): reaproveita a última resposta **boa**; falha nunca é
+   guardada, e o valor reaproveitado carrega `[cache MarketPulse: Ns]` na
+   justificativa exibida.
+3. **Teto diário** (`app/news/budget.py`, `NEWS_DAILY_CALL_BUDGET`, padrão
+   300): contado por dia UTC **no banco**, portanto compartilhado entre o
+   servidor web e o conector Windows — sem isso cada processo teria o seu
+   orçamento e o gasto real dobraria. Atingido o teto, nenhuma chamada nova
+   sai até a virada do dia.
+
+O consumo do dia, o prazo do cache e quantas chamadas foram poupadas
+aparecem em `/dashboard/settings/aisa`.
+
+### Score: sem dado não é meio ruim
+
+Um fator que **não pôde ser calculado** (sem chave de API, sem resposta,
+funcionalidade não implementada) sai do cálculo e tem o peso redistribuído
+entre os que têm dado — em vez de entrar valendo 50. A diferença é
+decisiva: com correlação (nunca implementada) e notícias/fundamentos
+neutros, o teto matemático do score era exatamente 90,0 com um limiar de
+90 — o sistema estava impedido de operar por construção.
+
+Não confundir com "calculou e deu neutro": ausência de order block com
+candles disponíveis **é** informação e continua valendo 50.
+
+### Portões são independentes do limiar
+
+Antes, os portões duros só existiam quando o limiar era `>= 90` — baixar
+para 89,9 desligava todos de uma vez, inclusive a exigência de notícias.
+Agora eles valem sempre, e quem faz pesquisa desliga explicitamente:
+`analysis run --no-gates` na CLI, `?enforce_gates=false` na API.
+
+### Cobertura proporcional
+
+Exigir 200 candles em todos os nove timeframes significava **16 anos** de
+histórico mensal — corretora nenhuma entrega, e o veredito era NÃO OPERAR
+para sempre. Hoje os timeframes **operacionais** (o de entrada e os dois
+acima) precisam das features completas; os de contexto macro precisam
+apenas de presença útil (30 candles).
 
 `PaperTradeRepository.list_all_recent`/`LiveTradeRepository.
 list_all_recent` (novos nesta fase) fazem um `JOIN` com `symbols` para

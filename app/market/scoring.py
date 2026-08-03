@@ -26,7 +26,7 @@ from app.market.smc import FairValueGap, LiquiditySweep, OrderBlock, PremiumDisc
 from app.market.structure import StructureEvent, StructureEventType, StructureLabel
 from app.market.volume_analysis import VolumeEvent, VolumeEventKind
 from app.mt5.market_data import Timeframe
-from app.news.provider import FundamentalsAssessment, NewsAssessment
+from app.news.provider import FundamentalsAssessment, NewsAssessment, ProviderStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +60,16 @@ class FactorScore:
     rationale: list[str] = field(default_factory=list)
     weight: float = 0.0
     weighted_contribution: float = 0.0
+    has_data: bool = True
+    """False quando o fator NAO PODE ser calculado (sem chave de API, sem
+    resposta, funcionalidade ainda nao implementada).
+
+    Nao confundir com "calculou e deu neutro": ausencia de order block com
+    candles disponiveis E informacao (o mercado nao ofereceu confluencia);
+    ausencia de resposta da API nao e informacao nenhuma. O primeiro caso
+    entra no score valendo 50; o segundo sai da conta e tem o peso
+    redistribuido — senao um fator inatingivel viraria um teto permanente
+    no score total."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,8 +211,13 @@ def score_volume(events: Sequence[VolumeEvent]) -> FactorScore:
 
 
 def score_news(assessment: NewsAssessment) -> FactorScore:
+    """Sentimento agregado das manchetes. Sem resposta valida da API o fator
+    sai da conta em vez de valer 50 — nao saber e diferente de ser neutro."""
     return FactorScore(
-        name="news", raw_score=_clip(assessment.score_contribution), rationale=[assessment.message]
+        name="news",
+        raw_score=_clip(assessment.score_contribution),
+        rationale=[assessment.message],
+        has_data=assessment.status == ProviderStatus.OK,
     )
 
 
@@ -211,18 +226,23 @@ def score_fundamentals(assessment: FundamentalsAssessment) -> FactorScore:
         name="fundamentals",
         raw_score=_clip(assessment.score_contribution),
         rationale=[assessment.message],
+        has_data=assessment.status == ProviderStatus.OK,
     )
 
 
 def score_correlation() -> FactorScore:
+    """Correlacao multi-simbolo nunca foi implementada (ver
+    `app/market/features.py`). Enquanto for assim ela nao entra no calculo:
+    carregar um peso fixo em 50 era uma penalidade permanente por uma
+    funcionalidade que nao existe."""
     return FactorScore(
         name="correlation",
         raw_score=50.0,
         rationale=[
-            "Correlacao entre ativos fora do escopo desta fase (ver "
-            "app/market/features.py — exige alinhamento multi-simbolo nao "
-            "implementado ainda) — contribui neutro, nunca fabricado."
+            "Correlacao entre ativos ainda nao implementada — fator fora do "
+            "calculo (peso redistribuido), nunca fabricado."
         ],
+        has_data=False,
     )
 
 
@@ -251,13 +271,26 @@ def compute_opportunity_score(
         (correlation, weights.correlation),
     )
 
-    factors = [
-        replace(factor, weight=weight, weighted_contribution=factor.raw_score * weight)
-        for factor, weight in named_inputs
-    ]
+    # Peso util: so os fatores que puderam ser calculados. O peso dos demais
+    # e redistribuido proporcionalmente, para que "sem dado" nao seja lido
+    # como "meio ruim". Sem isso, correlacao (nunca implementada, sempre 50)
+    # e noticias/fundamentos sem chave derrubavam ~10 pontos de um limiar de
+    # 90 — o sistema ficava matematicamente impedido de operar.
+    available_weight = sum(weight for factor, weight in named_inputs if factor.has_data)
+
+    factors: list[FactorScore] = []
+    for factor, weight in named_inputs:
+        effective = (weight / available_weight) if factor.has_data and available_weight else 0.0
+        factors.append(
+            replace(
+                factor,
+                weight=effective,
+                weighted_contribution=factor.raw_score * effective,
+            )
+        )
     total_score = sum(f.weighted_contribution for f in factors)
     recommendation: Literal["ENTER", "DO_NOT_ENTER"] = (
-        "ENTER" if total_score >= threshold else "DO_NOT_ENTER"
+        "ENTER" if available_weight > 0.0 and total_score >= threshold else "DO_NOT_ENTER"
     )
 
     reasons_below_threshold: list[str] = []
@@ -266,6 +299,10 @@ def compute_opportunity_score(
             f"Score total {total_score:.1f} abaixo do limiar minimo {threshold:.1f}."
         )
         for f in factors:
+            if not f.has_data:
+                # Ja aparece como "nao contabilizado"; repetir aqui como se
+                # fosse causa da reprovacao seria enganoso.
+                continue
             if f.raw_score < 60.0:
                 reasons_below_threshold.append(
                     f"{f.name}: score baixo ({f.raw_score:.1f}) — {'; '.join(f.rationale)}"

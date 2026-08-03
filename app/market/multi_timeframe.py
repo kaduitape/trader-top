@@ -79,10 +79,17 @@ class MultiTimeframeSnapshot:
 
 
 def _build_timeframe_snapshot(
-    session: Session, *, symbol_id: int, timeframe: Timeframe, extra_bars: int
+    session: Session,
+    *,
+    symbol_id: int,
+    timeframe: Timeframe,
+    extra_bars: int,
+    as_of: datetime | None = None,
 ) -> TimeframeSnapshot:
     bars_required = features_module.required_lookback_bars() + extra_bars
-    candles = CandleRepository(session).get_recent(symbol_id, timeframe.value, bars_required)
+    candles = CandleRepository(session).get_recent(
+        symbol_id, timeframe.value, bars_required, as_of=as_of
+    )
     bars_available = len(candles)
 
     warnings: list[str] = []
@@ -121,13 +128,18 @@ def build_multi_timeframe_snapshot(
     timeframes: tuple[Timeframe, ...] = ANALYSIS_TIMEFRAMES,
     extra_bars: int = 50,
     now: datetime,
+    as_of: datetime | None = None,
 ) -> MultiTimeframeSnapshot:
     """Monta o snapshot multi-timeframe de `symbol` a partir de candles ja
     armazenadas no banco (nunca reconecta ao MetaTrader).
 
     `now` e explicito (nunca `datetime.now()` interno) para manter a funcao
     determinista em teste, mesma convencao de `fetch_server_time`/
-    `check_feed_health`."""
+    `check_feed_health`.
+
+    `as_of` (opcional) le apenas as candles que existiam naquele instante —
+    e o que permite reavaliar o passado sem enxergar o futuro. Deixar em
+    None mantem o comportamento de sempre: usar tudo que ha no banco."""
     symbol_row = SymbolRepository(session).get_by_name(symbol)
     if symbol_row is None:
         raise SymbolNotFoundError(
@@ -137,7 +149,11 @@ def build_multi_timeframe_snapshot(
 
     snapshots = {
         tf: _build_timeframe_snapshot(
-            session, symbol_id=symbol_row.id, timeframe=tf, extra_bars=extra_bars
+            session,
+            symbol_id=symbol_row.id,
+            timeframe=tf,
+            extra_bars=extra_bars,
+            as_of=as_of,
         )
         for tf in timeframes
     }

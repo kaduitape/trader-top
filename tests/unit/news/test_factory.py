@@ -21,8 +21,11 @@ def _settings(**overrides: object) -> Settings:
 
 
 def _inner(provider: object) -> object:
-    """O provedor real por baixo do cache (o cache e transparente)."""
-    return provider._inner  # type: ignore[attr-defined]
+    """O provedor real no fim da cadeia cache -> orcamento -> cliente HTTP.
+    As duas camadas sao transparentes para quem consome."""
+    while hasattr(provider, "_inner"):
+        provider = provider._inner  # type: ignore[attr-defined]
+    return provider
 
 
 @pytest.fixture(autouse=True)

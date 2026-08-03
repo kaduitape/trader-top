@@ -2128,6 +2128,124 @@ def _print_analysis_report_text(report: AnalysisReport) -> None:
     )
 
 
+def cmd_analysis_calibrate(args: argparse.Namespace) -> int:
+    """Mede que score o mercado REAL produz, em vez de acreditar no numero
+    redondo da especificacao.
+
+    Percorre o historico ja coletado, reavalia a analise a cada N barras e
+    mostra a distribuicao dos scores. Um limiar so faz sentido depois de
+    saber quantas oportunidades ele deixaria passar: 90 nao significa nada
+    se o percentil 99 do seu ativo for 78.
+
+    Nao consulta a MarketPulse (`enforce_gates=False` e provedores locais):
+    calibracao nao pode custar cota, e o que se quer medir aqui e a parte
+    tecnica do score.
+    """
+    from app.market.multi_timeframe import ANALYSIS_TIMEFRAMES
+    from app.news.unconfigured import skipped_fundamentals, skipped_news
+
+    settings = get_settings()
+    timeframe = Timeframe(args.timeframe or settings.analysis_default_timeframe)
+
+    class _Local:
+        """Provedores que nunca saem para a rede."""
+
+        def __init__(self, factory):
+            self._factory = factory
+
+        def fetch_assessment(self, symbol: str, *, now: datetime):
+            return self._factory("Calibracao local: MarketPulse nao consultada.")
+
+    session = get_session_factory()()
+    try:
+        symbol_row = SymbolRepository(session).get_by_name(args.symbol)
+        if symbol_row is None:
+            print(f"ERRO: simbolo {args.symbol} nunca foi coletado.", file=sys.stderr)
+            return 1
+
+        candles = CandleRepository(session).get_recent(
+            symbol_row.id, timeframe.value, args.bars + 250
+        )
+        if len(candles) < 260:
+            print(
+                f"ERRO: apenas {len(candles)} candle(s) de {args.symbol}/{timeframe.value}; "
+                "colete mais historico antes de calibrar.",
+                file=sys.stderr,
+            )
+            return 1
+
+        scores: list[float] = []
+        blocked = 0
+        for offset in range(0, min(args.bars, len(candles) - 250), args.step):
+            momento = candles[len(candles) - 1 - offset].open_time
+            try:
+                report = analyze_symbol(
+                    session,
+                    symbol=args.symbol,
+                    primary_timeframe=timeframe,
+                    threshold=0.0,
+                    news_provider=_Local(skipped_news),
+                    fundamentals_provider=_Local(skipped_fundamentals),
+                    now=momento,
+                    enforce_gates=False,
+                    as_of=momento,
+                )
+            except (SymbolNotFoundError, NotImplementedError):
+                blocked += 1
+                continue
+            scores.append(report.score.total_score)
+    finally:
+        session.close()
+
+    if not scores:
+        print("ERRO: nenhuma janela pode ser avaliada.", file=sys.stderr)
+        return 1
+
+    ordenado = sorted(scores)
+
+    def percentil(p: float) -> float:
+        indice = min(len(ordenado) - 1, int(round((len(ordenado) - 1) * p)))
+        return ordenado[indice]
+
+    resultado = {
+        "symbol": args.symbol,
+        "timeframe": timeframe.value,
+        "amostras": len(ordenado),
+        "minimo": ordenado[0],
+        "mediana": percentil(0.50),
+        "p75": percentil(0.75),
+        "p90": percentil(0.90),
+        "p95": percentil(0.95),
+        "p99": percentil(0.99),
+        "maximo": ordenado[-1],
+        "timeframes_analisados": len(ANALYSIS_TIMEFRAMES),
+    }
+
+    if args.json:
+        print(json.dumps(resultado, indent=2, ensure_ascii=False))
+        return 0
+
+    print(f"\nCalibracao de {args.symbol} / {timeframe.value}")
+    print(f"  amostras avaliadas : {resultado['amostras']}")
+    print(f"  score minimo       : {resultado['minimo']:.1f}")
+    print(f"  mediana            : {resultado['mediana']:.1f}")
+    print(f"  percentil 75       : {resultado['p75']:.1f}")
+    print(f"  percentil 90       : {resultado['p90']:.1f}")
+    print(f"  percentil 95       : {resultado['p95']:.1f}")
+    print(f"  percentil 99       : {resultado['p99']:.1f}")
+    print(f"  score maximo       : {resultado['maximo']:.1f}")
+    print(
+        "\nLeitura: um limiar acima do percentil 99 nunca dispara neste ativo. "
+        "\nEscolher pelo percentil 90 significa mirar as 10% melhores janelas."
+    )
+    print(
+        "\nATENCAO: score alto NAO significa operacao lucrativa. Isto mede o "
+        "\nque o seu criterio considera bom, nao se esse criterio ganha dinheiro "
+        "\n— para isso e preciso backtest com custos."
+    )
+    return 0
+
+
 def cmd_analysis_run(args: argparse.Namespace) -> int:
     settings = get_settings()
     timeframe = Timeframe(args.timeframe or settings.analysis_default_timeframe)
@@ -2143,6 +2261,7 @@ def cmd_analysis_run(args: argparse.Namespace) -> int:
             primary_timeframe=timeframe,
             threshold=threshold,
             now=datetime.now(UTC),
+            enforce_gates=not args.no_gates,
         )
     except SymbolNotFoundError as exc:
         print(f"ERRO: {exc}", file=sys.stderr)
@@ -2709,7 +2828,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeframe", default=None, choices=[t.value for t in Timeframe]
     )
     analysis_run_parser.add_argument("--threshold", type=float, default=None)
+    analysis_run_parser.add_argument(
+        "--no-gates",
+        action="store_true",
+        help=(
+            "Modo pesquisa: ignora os portoes duros (cobertura, volume, fontes "
+            "externas). Os portoes sao independentes do limiar — sem esta flag "
+            "eles valem em qualquer limiar. Nunca use para decidir operacao real."
+        ),
+    )
     analysis_run_parser.add_argument("--json", action="store_true")
+
+    analysis_calibrate_parser = analysis_subparsers.add_parser(
+        "calibrate",
+        help=(
+            "Mede a distribuicao real de scores no historico coletado e ajuda a "
+            "escolher o limiar com dado, nao com numero redondo"
+        ),
+    )
+    analysis_calibrate_parser.add_argument("--symbol", required=True)
+    analysis_calibrate_parser.add_argument(
+        "--timeframe", default=None, choices=[t.value for t in Timeframe]
+    )
+    analysis_calibrate_parser.add_argument(
+        "--bars", type=int, default=500, help="Quantas barras recentes percorrer"
+    )
+    analysis_calibrate_parser.add_argument(
+        "--step", type=int, default=5, help="Avaliar a cada N barras (padrao 5)"
+    )
+    analysis_calibrate_parser.add_argument("--json", action="store_true")
 
     apexflow_parser = subparsers.add_parser(
         "apexflow",
@@ -2886,6 +3033,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "analysis" and args.analysis_command == "run":
         return cmd_analysis_run(args)
+    if args.command == "analysis" and args.analysis_command == "calibrate":
+        return cmd_analysis_calibrate(args)
 
     parser.print_help(sys.stderr)
     return 2

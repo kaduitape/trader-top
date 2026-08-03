@@ -61,6 +61,7 @@ from app.execution.autopilot_status import (
     load_autopilot_status,
     summarize_activities,
 )
+from app.execution.blocker_stats import load_blocker_stats
 from app.market.catalog import (
     GROUP_LABELS,
     MARKET_CATALOG,
@@ -80,6 +81,7 @@ from app.news.factory import (
     AISA_API_BASE_URL_SETTING,
     AISA_API_KEY_SETTING,
     get_assessment_cache,
+    get_budget_usage,
     reset_assessment_cache,
 )
 from app.services.analysis_service import AnalysisReport, analyze_symbol
@@ -805,6 +807,7 @@ def _trading_payload(db: Session) -> dict:
     return {
         "config": config,
         "status": status,
+        "blocker_stats": load_blocker_stats(db),
         "sync_status": sync_status,
         "worker_online": worker_online,
         "status_fresh": fresh,
@@ -855,6 +858,15 @@ def _trading_json(payload: dict) -> dict:
         "updated_at": status.updated_at,
         "reasons": list(status.reasons),
         "activities": summarize_activities(status.activities),
+        "day_cycles": payload["blocker_stats"].cycles,
+        "day_blockers": [
+            {
+                "reason": item.reason,
+                "count": item.count,
+                "share": round(item.share * 100, 1),
+            }
+            for item in payload["blocker_stats"].reasons[:5]
+        ],
     }
 
 
@@ -1342,6 +1354,7 @@ def dashboard_settings_aisa(
             "cache_ttl_seconds": settings.news_cache_ttl_seconds,
             "cache_hits": cache.hits,
             "cache_misses": cache.misses,
+            "budget": get_budget_usage(db, settings),
             "saved": saved,
             "error": error,
         },

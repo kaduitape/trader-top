@@ -26,6 +26,7 @@ def get_analysis(
     symbol: str,
     timeframe: str | None = None,
     threshold: float | None = None,
+    enforce_gates: bool = True,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
     _user: User = Depends(get_current_user),
@@ -38,6 +39,7 @@ def get_analysis(
             db,
             symbol=symbol,
             primary_timeframe=resolved_timeframe,
+            enforce_gates=enforce_gates,
             threshold=resolved_threshold,
             now=datetime.now(UTC),
         )

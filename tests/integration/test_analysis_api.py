@@ -125,7 +125,11 @@ def test_analysis_respects_custom_threshold(client, db_session) -> None:
 
     response = client.get(
         "/api/analysis/ANALYSIS_API_THRESHOLD",
-        params={"timeframe": "M15", "threshold": 1.0},
+        # `enforce_gates=false` e o modo pesquisa: os portoes duros
+        # (cobertura, volume, fontes externas) sao independentes do limiar
+        # desde que foram separados — sem desliga-los, nenhum limiar baixo
+        # produziria ENTER, e o que este teste verifica e o limiar.
+        params={"timeframe": "M15", "threshold": 1.0, "enforce_gates": "false"},
         headers={"Authorization": f"Bearer {token}"},
     )
 

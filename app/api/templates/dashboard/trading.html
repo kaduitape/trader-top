@@ -228,6 +228,38 @@
             </div>
         </section>
 
+        <section class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-question-circle me-2"></i>Por que não operei hoje
+                <span class="tp-pilot-updated ms-auto">{{ blocker_stats.cycles }} ciclos</span>
+            </div>
+            <div class="card-body p-4">
+                {% if blocker_stats.reasons %}
+                <p class="small text-muted mb-3">
+                    Um motivo que aparece em quase todos os ciclos é configuração para
+                    corrigir; um que aparece de vez em quando é o mercado.
+                </p>
+                <ul class="tp-reason-list">
+                    {% for item in blocker_stats.reasons[:5] %}
+                    <li {% if item.share >= 0.9 %}class="is-blocker"{% endif %}>
+                        <i class="bi {% if item.share >= 0.9 %}bi-slash-circle{% else %}bi-dot{% endif %}"></i>
+                        {{ item.reason }}
+                        <strong class="ms-auto">{{ "%.0f"|format(item.share * 100) }}%</strong>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="small text-muted mb-0">
+                    {% if blocker_stats.cycles %}
+                    Nenhum bloqueio registrado hoje em {{ blocker_stats.cycles }} ciclos.
+                    {% else %}
+                    Ainda não rodou nenhum ciclo hoje.
+                    {% endif %}
+                </p>
+                {% endif %}
+            </div>
+        </section>
+
         <section class="card">
             <div class="card-header"><i class="bi bi-sliders me-2"></i>Ajuste fino</div>
             <div class="card-body p-4">

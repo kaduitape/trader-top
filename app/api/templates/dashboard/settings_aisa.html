@@ -47,7 +47,33 @@
                         <dt>Chamadas poupadas</dt>
                         <dd>{{ cache_hits }} de {{ cache_hits + cache_misses }}</dd>
                     </div>
+                    <div>
+                        <dt>Consumo de hoje</dt>
+                        <dd>
+                            {%- if budget.limit > 0 -%}
+                            <strong{% if budget.exhausted %} class="text-danger"{% endif %}>{{ budget.calls }}</strong> / {{ budget.limit }}
+                            {%- else -%}
+                            {{ budget.calls }} (sem teto)
+                            {%- endif -%}
+                        </dd>
+                    </div>
                 </dl>
+                {% if budget.limit > 0 %}
+                <div class="progress tp-weight-progress mb-3">
+                    <div class="progress-bar {% if budget.exhausted %}bg-danger{% endif %}"
+                         style="width: {{ [100, (budget.calls / budget.limit * 100)|round(0, 'floor')|int]|min }}%"></div>
+                </div>
+                {% endif %}
+                {% if budget.exhausted %}
+                <div class="tp-context-note mb-3">
+                    <i class="bi bi-exclamation-octagon"></i>
+                    <div>
+                        <strong>Teto diário atingido.</strong> Nenhuma chamada nova será feita
+                        até a virada do dia UTC. Notícias e fundamentos saem do cálculo — o
+                        robô continua analisando com o que é local, sem inventar dado.
+                    </div>
+                </div>
+                {% endif %}
                 <div class="tp-context-note mt-3">
                     <i class="bi bi-piggy-bank"></i>
                     <div>

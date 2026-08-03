@@ -22,6 +22,10 @@ class ProviderStatus(enum.StrEnum):
     OK = "OK"
     NOT_CONFIGURED = "NOT_CONFIGURED"
     ERROR = "ERROR"
+    SKIPPED = "SKIPPED"
+    """A consulta nem chegou a ser feita — a analise ja estava bloqueada por
+    um motivo local (cobertura, volume) ou o orcamento diario de chamadas
+    acabou. Distinto de ERROR: nao houve falha, houve economia."""
 
 
 @dataclass(frozen=True, slots=True)

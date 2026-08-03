@@ -34,3 +34,21 @@ class UnconfiguredFundamentalsProvider:
             score_contribution=50.0,
             message=_MESSAGE_FUNDAMENTALS,
         )
+
+
+def skipped_news(reason: str) -> NewsAssessment:
+    """Fator de noticias quando a API NAO foi consultada de proposito."""
+    return NewsAssessment(
+        status=ProviderStatus.SKIPPED,
+        score_contribution=50.0,
+        items=[],
+        message=reason,
+    )
+
+
+def skipped_fundamentals(reason: str) -> FundamentalsAssessment:
+    return FundamentalsAssessment(
+        status=ProviderStatus.SKIPPED,
+        score_contribution=50.0,
+        message=reason,
+    )
