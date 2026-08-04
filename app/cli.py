@@ -2128,6 +2128,91 @@ def _print_analysis_report_text(report: AnalysisReport) -> None:
     )
 
 
+def cmd_calendar_check(args: argparse.Namespace) -> int:
+    """Mostra o que o portao de eventos VE agora, sem esperar um evento.
+
+    Existe para responder tres perguntas de uma vez: o arquivo esta sendo
+    lido? os horarios estao no fuso certo? o robo bloquearia neste momento?
+    Sem isso, so um payroll de verdade diria se a integracao funciona — e
+    descobrir que nao funciona nesse momento e o pior momento possivel.
+    """
+    from app.calendar_feed.blackout import (
+        BlackoutWindow,
+        currencies_for_symbol,
+        describe,
+        find_blocking_event,
+    )
+    from app.calendar_feed.factory import get_calendar_provider, reset_calendar_provider
+
+    settings = get_settings()
+    reset_calendar_provider()  # leitura fresca, sem cache
+    provider = get_calendar_provider(settings)
+
+    agora = datetime.now(UTC)
+    horizonte = max(args.horizon, 60)
+    snapshot = provider.fetch_events(now=agora, horizon_minutes=horizonte)
+
+    print(f"\nCalendario economico — {agora.strftime('%Y-%m-%d %H:%M')} UTC")
+    print(f"  fonte    : {settings.calendar_file_path or '(nao configurada)'}")
+    print(f"  situacao : {snapshot.status.value}")
+    if snapshot.message:
+        print(f"  detalhe  : {snapshot.message}")
+
+    if not snapshot.usable:
+        print(
+            "\nO filtro esta INATIVO. O robo continua operando — sem esta "
+            "protecao.\nConfigure CALENDAR_FILE_PATH e rode o "
+            "CalendarExporter.mq5 no MetaTrader."
+        )
+        return 1
+
+    moedas = currencies_for_symbol(args.symbol)
+    janela = BlackoutWindow(
+        minutes_before=settings.calendar_blackout_before_minutes,
+        minutes_after=settings.calendar_blackout_after_minutes,
+    )
+    print(f"  moedas de {args.symbol}: {', '.join(sorted(moedas)) or '(nao deduzidas)'}")
+    print(f"  janela   : -{janela.minutes_before}min / +{janela.minutes_after}min")
+
+    relevantes = [
+        evento
+        for evento in sorted(snapshot.events, key=lambda item: item.scheduled_at)
+        if not moedas or not evento.currency or evento.currency.upper() in moedas
+    ]
+
+    print(f"\nProximos eventos relevantes ({len(relevantes)} de {len(snapshot.events)}):")
+    if not relevantes:
+        print("  nenhum na janela consultada.")
+    for evento in relevantes[: args.limit]:
+        minutos = (evento.scheduled_at - agora).total_seconds() / 60
+        quando = f"em {minutos:6.0f} min" if minutos >= 0 else f"ha {abs(minutos):6.0f} min"
+        print(
+            f"  [{evento.impact:<6}] {evento.currency or '---':<4} {quando}  "
+            f"{evento.scheduled_at.strftime('%d/%m %H:%M')}Z  {evento.title}"
+        )
+
+    bloqueio = find_blocking_event(
+        snapshot.events,
+        symbol=args.symbol,
+        now=agora,
+        window=janela,
+        min_impact=settings.calendar_min_impact,
+    )
+    print("")
+    if bloqueio is None:
+        print(f"AGORA: entrada LIBERADA em {args.symbol} (nenhum evento na janela).")
+    else:
+        print(f"AGORA: entrada BLOQUEADA em {args.symbol}.")
+        print(f"       {describe(bloqueio, now=agora)}")
+
+    print(
+        "\nConfira o fuso: um evento conhecido (payroll dos EUA sai 12:30 ou "
+        "13:30 UTC)\ndeve aparecer no horario certo acima. Se estiver "
+        "deslocado em horas, o\nexportador nao converteu o fuso do servidor."
+    )
+    return 0
+
+
 def cmd_analysis_calibrate(args: argparse.Namespace) -> int:
     """Mede que score o mercado REAL produz, em vez de acreditar no numero
     redondo da especificacao.
@@ -2858,6 +2943,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analysis_calibrate_parser.add_argument("--json", action="store_true")
 
+    calendar_parser = subparsers.add_parser(
+        "calendar",
+        help="Calendario economico usado pelo filtro de eventos de alto impacto",
+    )
+    calendar_subparsers = calendar_parser.add_subparsers(
+        dest="calendar_command", required=True
+    )
+    calendar_check_parser = calendar_subparsers.add_parser(
+        "check",
+        help="Mostra os eventos lidos e se o robo bloquearia a entrada agora",
+    )
+    calendar_check_parser.add_argument("--symbol", default="EURUSD")
+    calendar_check_parser.add_argument(
+        "--horizon", type=int, default=1440, help="Janela consultada, em minutos"
+    )
+    calendar_check_parser.add_argument("--limit", type=int, default=15)
+
     apexflow_parser = subparsers.add_parser(
         "apexflow",
         help=(
@@ -3035,6 +3137,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_analysis_run(args)
     if args.command == "analysis" and args.analysis_command == "calibrate":
         return cmd_analysis_calibrate(args)
+    if args.command == "calendar" and args.calendar_command == "check":
+        return cmd_calendar_check(args)
 
     parser.print_help(sys.stderr)
     return 2

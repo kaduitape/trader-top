@@ -128,3 +128,69 @@ Regras de leitura, todas cobertas por teste:
 abrem caminho para medir surpresa (`actual − forecast`), que é fundamento
 quantitativo de verdade — deliberadamente fora deste portão, que é uma
 proteção binária.
+
+## Instalar o exportador
+
+`scripts/mql5/CalendarExporter.mq5` é o EA que gera esse arquivo.
+
+1. Copie o arquivo para `MQL5\Experts\` do seu terminal (menu
+   **Arquivo → Abrir pasta de dados**).
+2. No MetaEditor (F4), abra e compile (F7).
+3. Arraste o EA para qualquer gráfico. Ele não opera — só lê o calendário e
+   escreve o arquivo. Não precisa de "AutoTrading" ligado.
+4. Descubra o caminho da pasta comum: no terminal, **Arquivo → Abrir pasta de
+   dados** leva à pasta do terminal; a comum fica em
+   `...\MetaQuotes\Terminal\Common\Files\`. Aponte `CALENDAR_FILE_PATH`
+   para `calendar.json` lá dentro.
+
+Parâmetros do EA:
+
+| Entrada | Padrão | Para quê |
+|---|---|---|
+| `ExportPeriodMinutes` | 15 | Frequência de exportação |
+| `DaysAhead` / `DaysBack` | 3 / 1 | Janela exportada |
+| `OnlyMediumAndHigh` | true | Descarta ruído |
+| `UseCommonFolder` | true | Caminho previsível entre terminais |
+
+### Dois detalhes que erram em silêncio
+
+**Fuso.** O calendário do MT5 entrega horários no fuso do **servidor de
+trade**, não em UTC. Exportar sem converter deslocaria a janela inteira pelo
+offset da corretora — o robô evitaria o horário errado e entraria exatamente
+em cima da notícia. O EA converte usando `TimeTradeServer() − TimeGMT()`.
+
+**Escala.** Os valores são inteiros multiplicados por 1.000.000, e `LONG_MIN`
+significa "sem valor". O EA divide e emite `null` quando não há dado — nunca
+`0.0`, que seria publicar um número que ninguém divulgou.
+
+O EA escreve num arquivo temporário e só então substitui o definitivo, para
+que o leitor nunca pegue um JSON pela metade.
+
+## Verificar sem esperar um evento
+
+```powershell
+python -m app.cli calendar check --symbol EURUSD
+```
+
+Mostra a situação da fonte, os eventos relevantes com o tempo relativo, e se
+o robô bloquearia **neste momento**:
+
+```
+Calendario economico — 2026-08-04 10:21 UTC
+  fonte    : C:\...\Common\Files\calendar.json
+  situacao : OK
+  moedas de EURUSD: EUR, USD
+  janela   : -30min / +15min
+
+Proximos eventos relevantes (2 de 3):
+  [HIGH  ] USD  em     12 min  04/08 10:33Z  Non-Farm Payrolls
+  [HIGH  ] EUR  em    180 min  04/08 13:21Z  ECB President Speech
+
+AGORA: entrada BLOQUEADA em EURUSD.
+       Evento de alto impacto [USD] em 12 min: Non-Farm Payrolls.
+```
+
+**Use isso para conferir o fuso.** Um evento conhecido — o payroll dos EUA
+sai 12:30 ou 13:30 UTC conforme o horário de verão — deve aparecer no horário
+certo. Se estiver deslocado em horas, o exportador não converteu o fuso, e
+todo o filtro está errado sem dar erro.

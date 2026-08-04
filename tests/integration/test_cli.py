@@ -1750,3 +1750,98 @@ def test_cmd_analysis_run_json_output_is_valid_json(
     assert payload["symbol"] == "CLI_ANALYSIS_JSON"
     assert len(payload["score"]["factors"]) == 7
     assert payload["recommendation"] in ("ENTER", "DO_NOT_ENTER")
+
+
+def _write_calendar(tmp_path, eventos) -> str:
+    import json
+
+    caminho = tmp_path / "calendar.json"
+    caminho.write_text(json.dumps(eventos), encoding="utf-8")
+    return str(caminho)
+
+
+def test_cmd_calendar_check_reports_an_inactive_filter(
+    capsys: pytest.CaptureFixture, engine, monkeypatch
+) -> None:
+    """Sem calendario o filtro fica INATIVO, e o comando precisa dizer isso
+    com todas as letras — o robo segue operando sem essa protecao."""
+    from app.calendar_feed.factory import reset_calendar_provider
+
+    reset_calendar_provider()
+    args = cli.build_parser().parse_args(["calendar", "check"])
+    result = cli.cmd_calendar_check(args)
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "INATIVO" in captured.out
+
+
+def test_cmd_calendar_check_blocks_on_an_imminent_event(
+    capsys: pytest.CaptureFixture, engine, tmp_path, monkeypatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.calendar_feed.factory import reset_calendar_provider
+    from app.core.config import get_settings
+
+    agora = datetime.now(UTC)
+    caminho = _write_calendar(
+        tmp_path,
+        [
+            {
+                "title": "Non-Farm Payrolls",
+                "scheduled_at": (agora + timedelta(minutes=10)).isoformat(),
+                "currency": "USD",
+                "impact": "HIGH",
+            }
+        ],
+    )
+    get_settings.cache_clear()
+    monkeypatch.setenv("CALENDAR_FILE_PATH", caminho)
+    reset_calendar_provider()
+
+    args = cli.build_parser().parse_args(["calendar", "check", "--symbol", "EURUSD"])
+    result = cli.cmd_calendar_check(args)
+    captured = capsys.readouterr()
+
+    get_settings.cache_clear()
+    reset_calendar_provider()
+
+    assert result == 0
+    assert "BLOQUEADA" in captured.out
+    assert "Non-Farm Payrolls" in captured.out
+
+
+def test_cmd_calendar_check_ignores_an_event_of_another_currency(
+    capsys: pytest.CaptureFixture, engine, tmp_path, monkeypatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.calendar_feed.factory import reset_calendar_provider
+    from app.core.config import get_settings
+
+    agora = datetime.now(UTC)
+    caminho = _write_calendar(
+        tmp_path,
+        [
+            {
+                "title": "BoJ Decision",
+                "scheduled_at": (agora + timedelta(minutes=10)).isoformat(),
+                "currency": "JPY",
+                "impact": "HIGH",
+            }
+        ],
+    )
+    get_settings.cache_clear()
+    monkeypatch.setenv("CALENDAR_FILE_PATH", caminho)
+    reset_calendar_provider()
+
+    args = cli.build_parser().parse_args(["calendar", "check", "--symbol", "EURUSD"])
+    result = cli.cmd_calendar_check(args)
+    captured = capsys.readouterr()
+
+    get_settings.cache_clear()
+    reset_calendar_provider()
+
+    assert result == 0
+    assert "LIBERADA" in captured.out
