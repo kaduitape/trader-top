@@ -2128,6 +2128,89 @@ def _print_analysis_report_text(report: AnalysisReport) -> None:
     )
 
 
+def cmd_scanner_run(args: argparse.Namespace) -> int:
+    """Varre o mercado e mostra o ranking de oportunidades.
+
+    Nao envia ordem nenhuma. Com `--record`, grava a escolha no diario de
+    observacao para que, semanas depois, de para responder se as escolhas do
+    scanner foram melhores do que operar um par fixo — a unica forma honesta
+    de saber se a complexidade se pagou.
+    """
+    from app.calendar_feed.factory import get_calendar_provider
+    from app.market.correlation import check_exposure
+    from app.market.scan_journal import record_scan, summarize
+    from app.market.scanner import scan_market
+
+    settings = get_settings()
+    agora = datetime.now(UTC)
+
+    session = get_session_factory()()
+    try:
+        calendario = get_calendar_provider(settings).fetch_events(
+            now=agora, horizon_minutes=120
+        )
+        resultado = scan_market(
+            session,
+            now=agora,
+            timeframe=args.timeframe or settings.analysis_default_timeframe,
+            calendar=calendario,
+        )
+
+        print(f"\nVarredura — {agora.strftime('%Y-%m-%d %H:%M')} UTC")
+        print(f"  calendario: {calendario.status.value}")
+        print(f"  {len(resultado.candidates)} instrumento(s) avaliados\n")
+
+        print(f"  {'#':<3}{'ATIVO':<10}{'NOTA':>6}  {'SESSAO':>6}{'VOL':>6}{'CUSTO':>7}  DETALHE")
+        for posicao, candidato in enumerate(resultado.candidates[: args.limit], start=1):
+            detalhe = candidato.blocked_reason or (
+                f"{candidato.session_label}, volume {candidato.volume_label}"
+            )
+            marca = "  " if candidato.tradable else "X "
+            print(
+                f"{marca}{posicao:<3}{candidato.symbol:<10}{candidato.score:>6.0f}  "
+                f"{candidato.session_score:>6.0f}{candidato.volume_score:>6.0f}"
+                f"{candidato.cost_score:>7.0f}  {detalhe[:60]}"
+            )
+
+        melhor = resultado.best
+        print("")
+        if melhor is None:
+            print("Nenhum instrumento aprovado agora.")
+            return 0
+
+        print(f"ESCOLHA: {melhor.symbol} (nota {melhor.score:.0f})")
+        for razao in melhor.reasons:
+            print(f"  - {razao}")
+
+        if args.open_symbols:
+            abertos = [item.strip().upper() for item in args.open_symbols.split(",") if item.strip()]
+            veredito = check_exposure(session, candidate=melhor.symbol, open_symbols=abertos)
+            print("")
+            if veredito.allowed:
+                print(f"EXPOSICAO: liberada. {veredito.reason}")
+            else:
+                print(f"EXPOSICAO: RECUSADA. {veredito.reason}")
+
+        if args.record:
+            gravado = record_scan(session, resultado)
+            session.commit()
+            if gravado is not None:
+                resumo = summarize(session)
+                print(f"\nRegistrado. Diario tem {resumo.total} observacao(oes).")
+                if resumo.average_margin is not None:
+                    print(
+                        f"  margem media para o 2o colocado: {resumo.average_margin:.1f} pontos"
+                    )
+                    if resumo.average_margin < 5.0:
+                        print(
+                            "  ATENCAO: margem baixa — o ranking esta quase "
+                            "empatando, ou seja, discriminando pouco."
+                        )
+    finally:
+        session.close()
+    return 0
+
+
 def cmd_calendar_check(args: argparse.Namespace) -> int:
     """Mostra o que o portao de eventos VE agora, sem esperar um evento.
 
@@ -2943,6 +3026,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analysis_calibrate_parser.add_argument("--json", action="store_true")
 
+    scanner_parser = subparsers.add_parser(
+        "scanner",
+        help="Varredura de oportunidades entre todos os instrumentos coletados",
+    )
+    scanner_subparsers = scanner_parser.add_subparsers(
+        dest="scanner_command", required=True
+    )
+    scanner_run_parser = scanner_subparsers.add_parser(
+        "run", help="Ranking de oportunidades agora (nao envia ordem)"
+    )
+    scanner_run_parser.add_argument(
+        "--timeframe", default=None, choices=[t.value for t in Timeframe]
+    )
+    scanner_run_parser.add_argument("--limit", type=int, default=15)
+    scanner_run_parser.add_argument(
+        "--record", action="store_true", help="Grava a escolha no diario de observacao"
+    )
+    scanner_run_parser.add_argument(
+        "--open-symbols",
+        default="",
+        help="Posicoes ja abertas (separadas por virgula) para checar correlacao",
+    )
+
     calendar_parser = subparsers.add_parser(
         "calendar",
         help="Calendario economico usado pelo filtro de eventos de alto impacto",
@@ -3139,6 +3245,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_analysis_calibrate(args)
     if args.command == "calendar" and args.calendar_command == "check":
         return cmd_calendar_check(args)
+    if args.command == "scanner" and args.scanner_command == "run":
+        return cmd_scanner_run(args)
 
     parser.print_help(sys.stderr)
     return 2

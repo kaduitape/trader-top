@@ -466,6 +466,42 @@ python -m app.cli autopilot run --iterations 20 --poll-seconds 15
 
 Ver `docs/autopilot.md`.
 
+## Radar de oportunidades — qual moeda operar agora
+
+O sistema sempre soube avaliar **um** símbolo: o que você escolheu. O radar
+(`app/market/scanner.py`) compara todos os coletados e ordena por sessão de
+negociação (40%), volume relativo (35%) e **custo de entrada** (25%).
+
+Três decisões que separam isso de um scanner ingênuo:
+
+**Tudo é normalizado.** Volume bruto de XAUUSD não se compara com o de
+EURUSD. Cada critério mede o ativo contra ele mesmo — volume contra a mediana
+da própria hora, spread contra o próprio ATR.
+
+**O custo entra na nota.** Um sinal ótimo num par com spread três vezes acima
+do normal é pior que um sinal bom num par barato: o custo é certo, o sinal é
+hipótese.
+
+**Correlação vira veto** (`app/market/correlation.py`). Abrir EURUSD, GBPUSD
+e AUDUSD ao mesmo tempo não é diversificação — é a mesma aposta contra o
+dólar, três vezes, com 3x o risco. A correlação é **medida** dos retornos que
+já estão no banco, não presumida de uma tabela escrita à mão. Correlação
+negativa forte também conta: comprar EURUSD e vender USDCHF é a mesma aposta.
+
+**Modo observação.** O radar aumenta o número de oportunidades, não a
+qualidade média de cada uma — se a expectativa por operação for negativa,
+varrer o mercado faz perder mais rápido. Por isso o diário
+(`scanner run --record`) grava o que ele *escolheria*, incluindo a margem
+para o segundo colocado: margem baixa significa que o ranking está quase
+sorteando, e a complexidade não se paga.
+
+```powershell
+python -m app.cli scanner run --record --open-symbols EURUSD
+```
+
+Tela em `/dashboard/scanner`. Ela só mostra — quem liga o robô continua sendo
+a tela de operação.
+
 ## Calendário econômico — o portão que nunca disparou
 
 O sistema tinha um filtro para não entrar em cima de evento de alto impacto.

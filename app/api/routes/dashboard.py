@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import replace
+from datetime import UTC, datetime
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -680,6 +681,48 @@ def dashboard_market_data(
             "candle_count": sum(row[2] for row in candle_summary),
             "tick_count": sum(row[1] for row in tick_summary),
             "timeframe_count": len({row[1] for row in candle_summary}),
+        },
+    )
+
+
+@router.get("/dashboard/scanner", response_class=HTMLResponse)
+def dashboard_scanner(
+    request: Request,
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Ranking de oportunidades entre todos os instrumentos coletados.
+
+    Tela de LEITURA: mostra o que o scanner escolheria, sem enviar nada. O
+    botao de operar continua sendo o da tela de operacao.
+    """
+    from app.calendar_feed.factory import get_calendar_provider
+    from app.market.scan_journal import summarize
+    from app.market.scanner import scan_market
+
+    settings = get_settings()
+    agora = datetime.now(UTC)
+    calendario = get_calendar_provider(settings).fetch_events(
+        now=agora, horizon_minutes=120
+    )
+    resultado = scan_market(
+        db,
+        now=agora,
+        timeframe=settings.analysis_default_timeframe,
+        calendar=calendario,
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "dashboard/scanner.html",
+        {
+            "user": user,
+            "generated_at": agora,
+            "candidates": resultado.candidates,
+            "best": resultado.best,
+            "calendar_status": calendario.status.value,
+            "calendar_message": calendario.message,
+            "journal": summarize(db),
         },
     )
 

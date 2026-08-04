@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Radar de oportunidades — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Varredura de mercado</span>
+        <h1 class="tp-page-title">Radar de oportunidades</h1>
+        <p class="tp-page-description">
+            Compara todos os instrumentos coletados por sessão, volume relativo e custo
+            de entrada. Esta tela só <strong>mostra</strong> — quem liga o robô é a tela
+            de operação.
+        </p>
+    </div>
+    <a href="/dashboard/trading" class="btn btn-outline-light">
+        <i class="bi bi-robot me-2"></i>Operar
+    </a>
+</header>
+
+{% if best %}
+<section class="tp-pilot-hero is-working">
+    <div class="tp-pilot-headline">
+        <span class="tp-pilot-pulse" aria-hidden="true"></span>
+        <div class="tp-pilot-copy">
+            <span class="tp-eyebrow"><i class="bi bi-bullseye me-1"></i>Melhor agora</span>
+            <strong>{{ best.symbol }} — nota {{ "%.0f"|format(best.score) }}</strong>
+            <span>{{ best.session_label }}, volume {{ best.volume_label }}.</span>
+        </div>
+        <div class="tp-pilot-symbol">
+            <span>Custo de entrada</span>
+            <strong>
+                {%- if best.spread_atr_ratio is not none -%}
+                {{ "%.0f"|format(best.spread_atr_ratio * 100) }}% do ATR
+                {%- else -%}—{%- endif -%}
+            </strong>
+        </div>
+    </div>
+</section>
+{% else %}
+<div class="alert alert-secondary">
+    <i class="bi bi-moon-stars me-2"></i>Nenhum instrumento aprovado neste momento.
+</div>
+{% endif %}
+
+<div class="row g-4 mt-1">
+    <div class="col-xl-8">
+        <section class="card tp-table-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-list-ol me-2"></i>Ranking</span>
+                <span class="small text-muted">{{ generated_at.strftime("%H:%M") }} UTC</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th>#</th><th>Ativo</th><th>Nota</th>
+                            <th>Sessão</th><th>Volume</th><th>Custo</th><th>Situação</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for item in candidates %}
+                        <tr {% if not item.tradable %}class="text-muted"{% endif %}>
+                            <td>{{ loop.index }}</td>
+                            <td class="tp-symbol">{{ item.symbol }}</td>
+                            <td><strong>{{ "%.0f"|format(item.score) }}</strong></td>
+                            <td>{{ "%.0f"|format(item.session_score) }}</td>
+                            <td>{{ "%.0f"|format(item.volume_score) }}</td>
+                            <td>
+                                {{ "%.0f"|format(item.cost_score) }}
+                                {%- if item.spread_atr_ratio is not none %}
+                                <small class="d-block text-muted">
+                                    {{ "%.0f"|format(item.spread_atr_ratio * 100) }}% do ATR
+                                </small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.tradable %}
+                                <span class="badge bg-success">livre</span>
+                                {% else %}
+                                <span class="badge text-bg-dark">{{ item.blocked_reason }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="7" class="tp-empty-row">Nenhum instrumento coletado ainda.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-xl-4">
+        <section class="card mb-4">
+            <div class="card-header"><i class="bi bi-rulers me-2"></i>Como a nota é montada</div>
+            <div class="card-body p-4">
+                <p class="small text-muted">
+                    Cada critério compara o ativo com <strong>ele mesmo</strong> — volume
+                    contra a mediana da própria hora, spread contra o próprio ATR. Sem isso
+                    o ranking só diria qual ativo tem números maiores.
+                </p>
+                <div class="tp-pilot-meta">
+                    <div><span>Sessão</span><strong>40%</strong></div>
+                    <div><span>Volume relativo</span><strong>35%</strong></div>
+                    <div><span>Custo de entrada</span><strong>25%</strong></div>
+                </div>
+                <div class="tp-context-note mt-4">
+                    <i class="bi bi-cash-coin"></i>
+                    <div>
+                        O custo entra na nota de propósito: um sinal ótimo num par caro é
+                        pior que um sinal bom num par barato. O custo é certo; o sinal é
+                        hipótese.
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="card mb-4">
+            <div class="card-header"><i class="bi bi-clipboard-data me-2"></i>Modo observação</div>
+            <div class="card-body p-4">
+                {% if journal.total %}
+                <div class="tp-pilot-meta">
+                    <div><span>Escolhas registradas</span><strong>{{ journal.total }}</strong></div>
+                    <div>
+                        <span>Margem para o 2º</span>
+                        <strong>
+                            {%- if journal.average_margin is not none -%}
+                            {{ "%.1f"|format(journal.average_margin) }}
+                            {%- else -%}—{%- endif -%}
+                        </strong>
+                    </div>
+                </div>
+                <p class="small text-muted mt-3 mb-2">Mais escolhidos:</p>
+                <ul class="tp-reason-list">
+                    {% for symbol, count in journal.by_symbol[:5] %}
+                    <li><i class="bi bi-dot"></i>{{ symbol }} — {{ count }}x</li>
+                    {% endfor %}
+                </ul>
+                {% if journal.average_margin is not none and journal.average_margin < 5 %}
+                <div class="tp-context-note mt-3">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <div>
+                        Margem baixa para o segundo colocado: o ranking está quase
+                        empatando, ou seja, discriminando pouco. Vale conferir se a
+                        complexidade está se pagando.
+                    </div>
+                </div>
+                {% endif %}
+                {% else %}
+                <p class="small text-muted mb-0">
+                    Nenhuma escolha registrada ainda. Rode
+                    <code>python -m app.cli scanner run --record</code> periodicamente para
+                    acumular amostra e depois comparar: as escolhas do radar foram melhores
+                    que operar um par fixo?
+                </p>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="card-header"><i class="bi bi-calendar-event me-2"></i>Calendário</div>
+            <div class="card-body p-4">
+                <p class="small mb-0">
+                    <span class="badge {% if calendar_status == 'OK' %}bg-success{% else %}text-bg-dark{% endif %}">
+                        {{ calendar_status }}
+                    </span>
+                    <span class="text-muted d-block mt-2">{{ calendar_message }}</span>
+                </p>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}

@@ -751,3 +751,15 @@ def test_dashboard_settings_aisa_save_with_no_fields_is_rejected(client, db_sess
 
     assert response.status_code == 303
     assert "error=" in response.headers["location"]
+
+
+def test_dashboard_scanner_ranks_the_collected_symbols(client, db_session) -> None:
+    """A tela de radar e somente leitura: mostra o ranking, nao opera."""
+    _create_user(db_session, "dash_scanner_user", "correct-password")
+    _login(client, "dash_scanner_user", "correct-password")
+
+    response = client.get("/dashboard/scanner")
+
+    assert response.status_code == 200
+    assert "Radar de oportunidades" in response.text
+    assert "Modo observação" in response.text
