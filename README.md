@@ -466,6 +466,25 @@ python -m app.cli autopilot run --iterations 20 --poll-seconds 15
 
 Ver `docs/autopilot.md`.
 
+## Corretora de execução — MT5 e cTrader
+
+O sistema decide **onde** entrar; a corretora só executa. Essa separação é a
+porta `BrokerPort` (`app/broker/port.py`), com quatro operações: ler a conta,
+listar posições, enviar ordem a mercado com stop e alvo anexados, e alterar a
+proteção. Não existe "fechar posição" na porta — quem encerra é o stop ou o
+alvo do lado do broker.
+
+`BROKER=mt5` é o padrão e continua sendo o caminho de produção.
+`BROKER=ctrader` liga o adaptador da cTrader Open API, que roda em Linux e
+dispensa o Windows. A guarda de coerência entre modo e tipo de conta vale
+igual nos dois, nos dois sentidos.
+
+A camada de tradução da cTrader — conversão de lotes para centésimos de
+unidade, resolução de símbolo, montagem do pedido — é coberta por testes
+determinísticos. O transporte TCP+TLS **ainda não foi validado contra os
+servidores reais**: use conta demo antes de qualquer dinheiro. Ver
+`docs/broker.md`.
+
 ## ApexFlow AI — motor de decisão por fluxo de ticks
 
 Alternativa ao seletor de operacional, ligada em `/dashboard/apexflow`. Em

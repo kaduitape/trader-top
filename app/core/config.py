@@ -103,6 +103,24 @@ class Settings(BaseSettings):
     # gastar mais. Zero = sem limite.
     news_daily_call_budget: int = 300
 
+    # --- Corretora de execucao --------------------------------------------------
+    # `mt5` (padrao) e o unico caminho hoje validado contra conta real neste
+    # projeto. `ctrader` liga o adaptador da Open API -- ver
+    # app/broker/factory.py e docs/broker.md. A troca e deliberada e falha
+    # alto se faltar credencial: nunca volta ao MT5 em silencio.
+    broker: str = "mt5"
+
+    ctrader_client_id: str | None = None
+    ctrader_client_secret: str | None = None
+    ctrader_access_token: str | None = None
+    ctrader_account_id: int | None = None
+    ctrader_account_is_demo: bool | None = None
+    """Tipo esperado da conta. Usado quando a Open API nao informa `isLive`:
+    sem isso o sistema recusa operar em vez de adivinhar se o dinheiro e
+    de verdade."""
+
+    ctrader_order_label: str = "ai-trader-pro"
+
     # --- Motor de analise Price Action / SMC / multi-timeframe (Fase 18) --------
     analysis_default_timeframe: str = "M15"
     analysis_default_threshold: float = 90.0
