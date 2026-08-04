@@ -103,6 +103,31 @@ class Settings(BaseSettings):
     # gastar mais. Zero = sem limite.
     news_daily_call_budget: int = 300
 
+    # --- Calendario economico ---------------------------------------------------
+    # Fonte do filtro "nao entre em cima de evento de alto impacto". Vazio
+    # desliga o filtro (o robo segue operando -- ver
+    # CALENDAR_BLOCK_WHEN_UNAVAILABLE). O caminho aponta para um JSON mantido
+    # por fora do processo, tipicamente exportado do calendario nativo do
+    # MetaTrader 5 por um EA. Ver docs/calendar.md.
+    calendar_file_path: str | None = None
+    calendar_blackout_before_minutes: int = 30
+    calendar_blackout_after_minutes: int = 15
+    """O perigo nao acaba na divulgacao: depois dela o spread abre e o preco
+    chicoteia."""
+
+    calendar_min_impact: str = "HIGH"
+    calendar_cache_ttl_seconds: float = 900.0
+    calendar_max_age_hours: int = 36
+    """Acima disso o arquivo e considerado desatualizado. Calendario velho e
+    pior que nenhum: os eventos de hoje nao estao la e o sistema acreditaria
+    que o dia esta limpo."""
+
+    calendar_block_when_unavailable: bool = False
+    """Decisao explicita do dono do sistema: sem calendario, o robo CONTINUA
+    operando. Bloquear recriaria o problema que o projeto acabou de resolver
+    (parar por falta de dado externo). A ausencia aparece no status e no
+    relatorio do dia -- nunca passa despercebida."""
+
     # --- Corretora de execucao --------------------------------------------------
     # `mt5` (padrao) e o unico caminho hoje validado contra conta real neste
     # projeto. `ctrader` liga o adaptador da Open API -- ver

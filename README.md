@@ -466,6 +466,26 @@ python -m app.cli autopilot run --iterations 20 --poll-seconds 15
 
 Ver `docs/autopilot.md`.
 
+## Calendário econômico — o portão que nunca disparou
+
+O sistema tinha um filtro para não entrar em cima de evento de alto impacto.
+Ele comparava a hora atual com a data de **publicação de uma notícia** —
+sempre no passado — então a condição nunca era verdadeira: **nunca bloqueou
+uma única entrada**. E ignorava a moeda do evento, de modo que um dado do
+iene teria barrado uma entrada em EUR/USD.
+
+A raiz era tratar notícia e calendário como a mesma coisa. Agora são tipos
+diferentes: manchete tem hora de publicação, evento tem hora de agendamento.
+O portão compara com o agendamento, filtra pelas moedas do instrumento e
+bloqueia dos **dois lados** do evento (o spread abre depois da divulgação,
+não só antes).
+
+Sem calendário configurado, o robô **continua operando** — travar por falta
+de dado externo recriaria o problema que o projeto acabou de resolver. A
+ausência aparece no status e no relatório do dia. Fonte sugerida: o
+calendário nativo do MT5, exportado para JSON por um EA. Ver
+`docs/calendar.md`.
+
 ## Corretora de execução — MT5 e cTrader
 
 O sistema decide **onde** entrar; a corretora só executa. Essa separação é a

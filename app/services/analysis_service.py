@@ -13,12 +13,19 @@ de execucao real permanece inteiramente separada e intocada."""
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Literal
 
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from app.calendar_feed.blackout import (
+    BlackoutWindow,
+    describe,
+    find_blocking_event,
+)
+from app.calendar_feed.factory import get_calendar_provider
+from app.calendar_feed.provider import CalendarProvider
 from app.core.config import get_settings
 from app.market.multi_timeframe import (
     ANALYSIS_TIMEFRAMES,
@@ -104,6 +111,50 @@ _MIN_VOLUME_SCORE = 60.0
 _CONTEXT_MIN_BARS = 30
 
 
+def _calendar_blockers(
+    *,
+    symbol: str,
+    now: datetime,
+    settings,
+    provider: CalendarProvider | None = None,
+) -> list[str]:
+    """Bloqueio por evento economico agendado.
+
+    Este portao ja existiu e NUNCA disparou: comparava o horario atual com a
+    data de PUBLICACAO de uma noticia (sempre no passado) e ignorava a moeda
+    do evento. Agora compara com o horario AGENDADO e so considera eventos
+    das moedas do instrumento.
+
+    Sem calendario configurado ou legivel, NAO bloqueia — decisao explicita
+    do dono do sistema. Travar por falta de dado externo recriaria o problema
+    que o projeto acabou de resolver. A ausencia nao some: vira o aviso que
+    aparece no status e no relatorio do dia.
+    """
+    resolvido = provider or get_calendar_provider(settings)
+    horizonte = max(
+        settings.calendar_blackout_before_minutes,
+        settings.calendar_blackout_after_minutes,
+    )
+    snapshot = resolvido.fetch_events(now=now, horizon_minutes=horizonte * 2)
+
+    if not snapshot.usable:
+        if settings.calendar_block_when_unavailable:
+            return [f"Calendario indisponivel e bloqueio exigido: {snapshot.message}"]
+        return []
+
+    evento = find_blocking_event(
+        snapshot.events,
+        symbol=symbol,
+        now=now,
+        window=BlackoutWindow(
+            minutes_before=settings.calendar_blackout_before_minutes,
+            minutes_after=settings.calendar_blackout_after_minutes,
+        ),
+        min_impact=settings.calendar_min_impact,
+    )
+    return [describe(evento, now=now)] if evento is not None else []
+
+
 def _coverage_blockers(
     snapshot: MultiTimeframeSnapshot, *, primary_timeframe: Timeframe
 ) -> list[str]:
@@ -154,6 +205,7 @@ def analyze_symbol(
     now: datetime | None = None,
     enforce_gates: bool = True,
     as_of: datetime | None = None,
+    calendar_provider: CalendarProvider | None = None,
 ) -> AnalysisReport:
     """Analisa `symbol` no `primary_timeframe`, com contexto dos demais
     timeframes (`ANALYSIS_TIMEFRAMES`) para alinhamento de tendencia.
@@ -269,6 +321,14 @@ def analyze_symbol(
                 f"Volume nao favoravel (score {volume_factor.raw_score:.1f}, "
                 f"minimo {_MIN_VOLUME_SCORE:.0f})."
             )
+        local_block_reasons.extend(
+            _calendar_blockers(
+                symbol=symbol,
+                now=resolved_now,
+                settings=settings,
+                provider=calendar_provider,
+            )
+        )
 
     if local_block_reasons:
         motivo = (
@@ -318,16 +378,6 @@ def analyze_symbol(
         if fundamentals_assessment.status != ProviderStatus.OK:
             hard_block_reasons.append(
                 "Fundamentos/macro sem confirmacao valida; entrada bloqueada por seguranca."
-            )
-
-        high_impact_deadline = resolved_now + timedelta(minutes=60)
-        if any(
-            item.impact == "HIGH"
-            and resolved_now <= item.published_at <= high_impact_deadline
-            for item in news_assessment.items
-        ):
-            hard_block_reasons.append(
-                "Noticia de alto impacto prevista para os proximos 60 minutos."
             )
 
     if hard_block_reasons:

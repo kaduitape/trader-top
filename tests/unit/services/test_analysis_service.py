@@ -403,3 +403,123 @@ def test_the_macro_context_does_not_require_sixteen_years_of_history(db_session)
     )
 
     assert not any("Contexto macro ausente" in reason for reason in report.rejection_reasons)
+
+
+class _CalendarStub:
+    """Provedor de calendario controlado pelo teste."""
+
+    def __init__(self, snapshot):
+        self.snapshot = snapshot
+        self.calls = 0
+
+    def fetch_events(self, *, now, horizon_minutes):
+        self.calls += 1
+        return self.snapshot
+
+
+def _evento(minutos: float, *, currency: str = "USD", impact: str = "HIGH"):
+    from app.calendar_feed.provider import CalendarEvent
+
+    return CalendarEvent(
+        title="Non-Farm Payrolls",
+        scheduled_at=_NOW + timedelta(minutes=minutos),
+        currency=currency,
+        impact=impact,
+    )
+
+
+def _snapshot(eventos, status=None):
+    from app.calendar_feed.provider import CalendarSnapshot, CalendarStatus
+
+    return CalendarSnapshot(status=status or CalendarStatus.OK, events=list(eventos))
+
+
+def test_a_scheduled_high_impact_event_blocks_the_entry(db_session) -> None:
+    """O portao que NUNCA disparou. Com cobertura completa e tudo mais em
+    ordem, um evento daqui a 10 minutos precisa barrar a entrada."""
+    _seed_full_coverage(db_session, "EURUSD.calblock")
+
+    report = analyze_symbol(
+        db_session,
+        symbol="EURUSD.calblock",
+        primary_timeframe=Timeframe.M15,
+        news_provider=_FakeNewsProvider(),
+        fundamentals_provider=_FakeFundamentalsProvider(),
+        now=_NOW,
+        calendar_provider=_CalendarStub(_snapshot([_evento(10)])),
+    )
+
+    assert report.recommendation == "DO_NOT_ENTER"
+    assert any("alto impacto" in motivo for motivo in report.rejection_reasons)
+    assert any("Non-Farm Payrolls" in motivo for motivo in report.rejection_reasons)
+
+
+def test_the_calendar_gate_runs_before_the_paid_api(db_session) -> None:
+    """Economia: se o evento ja barra, nao ha por que pagar pela MarketPulse."""
+    _seed_full_coverage(db_session, "EURUSD.calsaves")
+    noticias = _CountingNewsProvider()
+
+    analyze_symbol(
+        db_session,
+        symbol="EURUSD.calsaves",
+        primary_timeframe=Timeframe.M15,
+        news_provider=noticias,
+        fundamentals_provider=_FakeFundamentalsProvider(),
+        now=_NOW,
+        calendar_provider=_CalendarStub(_snapshot([_evento(5)])),
+    )
+
+    assert noticias.calls == 0
+
+
+def test_an_event_of_another_currency_does_not_block_the_entry(db_session) -> None:
+    _seed_full_coverage(db_session, "EURUSD.calccy")
+
+    report = analyze_symbol(
+        db_session,
+        symbol="EURUSD.calccy",
+        primary_timeframe=Timeframe.M15,
+        news_provider=_FakeNewsProvider(),
+        fundamentals_provider=_FakeFundamentalsProvider(),
+        now=_NOW,
+        calendar_provider=_CalendarStub(_snapshot([_evento(10, currency="JPY")])),
+    )
+
+    assert not any("alto impacto" in motivo for motivo in report.rejection_reasons)
+
+
+def test_an_unavailable_calendar_does_not_stop_the_robot(db_session) -> None:
+    """Decisao explicita do dono do sistema: travar por falta de dado
+    externo recriaria o problema que o projeto acabou de resolver."""
+    from app.calendar_feed.provider import CalendarStatus
+
+    _seed_full_coverage(db_session, "EURUSD.caldown")
+
+    report = analyze_symbol(
+        db_session,
+        symbol="EURUSD.caldown",
+        primary_timeframe=Timeframe.M15,
+        news_provider=_FakeNewsProvider(),
+        fundamentals_provider=_FakeFundamentalsProvider(),
+        now=_NOW,
+        calendar_provider=_CalendarStub(_snapshot([], status=CalendarStatus.ERROR)),
+    )
+
+    assert not any("alto impacto" in motivo for motivo in report.rejection_reasons)
+    assert not any("Calendario" in motivo for motivo in report.rejection_reasons)
+
+
+def test_a_clear_calendar_does_not_block(db_session) -> None:
+    _seed_full_coverage(db_session, "EURUSD.calclear")
+
+    report = analyze_symbol(
+        db_session,
+        symbol="EURUSD.calclear",
+        primary_timeframe=Timeframe.M15,
+        news_provider=_FakeNewsProvider(),
+        fundamentals_provider=_FakeFundamentalsProvider(),
+        now=_NOW,
+        calendar_provider=_CalendarStub(_snapshot([_evento(300)])),
+    )
+
+    assert not any("alto impacto" in motivo for motivo in report.rejection_reasons)
