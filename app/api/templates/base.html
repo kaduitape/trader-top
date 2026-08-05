@@ -43,11 +43,14 @@
     </a>
 
     <span class="tp-nav-label">Sistema</span>
+    <a class="tp-nav-link {% if request.url.path == '/dashboard/settings' %}active{% endif %}" href="/dashboard/settings">
+        <i class="bi bi-gear"></i><span>Configurações</span>
+    </a>
     <a class="tp-nav-link {% if request.url.path == '/dashboard/mode' %}active{% endif %}" href="/dashboard/mode">
         <i class="bi bi-toggle2-on"></i><span>Modo operacional</span>
     </a>
     <a class="tp-nav-link {% if request.url.path == '/dashboard/settings/aisa' %}active{% endif %}" href="/dashboard/settings/aisa">
-        <i class="bi bi-cloud-check"></i><span>MarketPulse</span>
+        <i class="bi bi-cloud-check"></i><span>API MarketPulse</span>
     </a>
     <a class="tp-nav-link {% if request.url.path == '/dashboard/audit-log' %}active{% endif %}" href="/dashboard/audit-log">
         <i class="bi bi-shield-check"></i><span>Auditoria</span>

@@ -70,6 +70,14 @@ from app.market.catalog import (
     grouped_availability,
 )
 from app.market.multi_timeframe import ANALYSIS_TIMEFRAMES, SymbolNotFoundError
+from app.market.scan_settings import (
+    INTERVAL_MAX_MINUTES,
+    INTERVAL_MIN_MINUTES,
+    ObservationConfig,
+    clamp_interval,
+    load_observation_config,
+    save_observation_config,
+)
 from app.ml.registry import ModelRegistry
 from app.mt5.market_data import Timeframe
 from app.mt5.sync_settings import (
@@ -77,6 +85,15 @@ from app.mt5.sync_settings import (
     load_sync_config,
     load_sync_status,
     save_sync_config,
+)
+from app.news.api_settings import (
+    BUDGET_MAX,
+    BUDGET_MIN,
+    TTL_MAX,
+    TTL_MIN,
+    load_api_settings,
+    save_api_settings,
+    validate_api_settings,
 )
 from app.news.factory import (
     AISA_API_BASE_URL_SETTING,
@@ -398,7 +415,17 @@ def dashboard_mt5_action(
     user: User = Depends(get_current_user_for_web),
     db: Session = Depends(get_db),
     requested_action: str = Form(...),
+    origin: str = Form("/dashboard/mt5"),
 ) -> RedirectResponse:
+    # `origin` deixa o botao "Atualizar dados agora" existir nas telas onde a
+    # falta de dado aparece, e nao so na tela do conector. Valor fora da
+    # lista conhecida cai no conector, para que um parametro manipulado nao
+    # vire redirecionamento aberto.
+    destino = (
+        origin
+        if origin in {"/dashboard/mt5", "/dashboard/market-data", "/dashboard/analysis"}
+        else "/dashboard/mt5"
+    )
     config = load_sync_config(db)
     action = requested_action.strip().lower()
     if action == "start":
@@ -410,7 +437,7 @@ def dashboard_mt5_action(
     elif action == "sync":
         if not config.enabled:
             return RedirectResponse(
-                url=f"/dashboard/mt5?error={quote('ative a sincronizacao antes de atualizar agora.')}",
+                url=f"{destino}?error={quote('ative a sincronizacao antes de atualizar agora.')}",
                 status_code=303,
             )
         updated = replace(config, sync_request_id=uuid4().hex)
@@ -420,7 +447,7 @@ def dashboard_mt5_action(
         message = "Teste de conexao solicitado"
     else:
         return RedirectResponse(
-            url=f"/dashboard/mt5?error={quote('acao MT5 desconhecida.')}",
+            url=f"{destino}?error={quote('acao MT5 desconhecida.')}",
             status_code=303,
         )
 
@@ -432,7 +459,10 @@ def dashboard_mt5_action(
         user_id=user.id,
     )
     db.commit()
-    return RedirectResponse(url=f"/dashboard/mt5?action={quote(message)}", status_code=303)
+    # A tela do conector tem um bloco proprio para `action`; as outras usam o
+    # mesmo `saved` que ja exibem para qualquer confirmacao.
+    campo = "action" if destino == "/dashboard/mt5" else "saved"
+    return RedirectResponse(url=f"{destino}?{campo}={quote(message)}", status_code=303)
 
 
 @router.get("/dashboard/analysis", response_class=HTMLResponse)
@@ -685,32 +715,47 @@ def dashboard_market_data(
     )
 
 
+def _run_scan(db: Session, now: datetime):
+    """Varredura + calendario, do jeito que a tela e o botao precisam.
+
+    Existe para que "ver o ranking" e "gravar esta escolha" usem exatamente
+    o mesmo caminho: se o botao gravasse algo diferente do que a tela
+    mostra, o diario deixaria de descrever o que o operador viu.
+    """
+    from app.calendar_feed.factory import get_calendar_provider
+    from app.market.scanner import scan_market
+
+    settings = get_settings()
+    calendario = get_calendar_provider(settings).fetch_events(
+        now=now, horizon_minutes=120
+    )
+    resultado = scan_market(
+        db,
+        now=now,
+        timeframe=settings.analysis_default_timeframe,
+        calendar=calendario,
+    )
+    return resultado, calendario
+
+
 @router.get("/dashboard/scanner", response_class=HTMLResponse)
 def dashboard_scanner(
     request: Request,
     user: User = Depends(get_current_user_for_web),
     db: Session = Depends(get_db),
+    saved: str | None = None,
+    error: str | None = None,
 ) -> HTMLResponse:
     """Ranking de oportunidades entre todos os instrumentos coletados.
 
-    Tela de LEITURA: mostra o que o scanner escolheria, sem enviar nada. O
-    botao de operar continua sendo o da tela de operacao.
+    Tela de LEITURA quanto a operar — ela nunca envia ordem. Gravar uma
+    amostra no diario e a unica escrita, e e escrita de observacao.
     """
-    from app.calendar_feed.factory import get_calendar_provider
     from app.market.scan_journal import summarize
-    from app.market.scanner import scan_market
 
-    settings = get_settings()
     agora = datetime.now(UTC)
-    calendario = get_calendar_provider(settings).fetch_events(
-        now=agora, horizon_minutes=120
-    )
-    resultado = scan_market(
-        db,
-        now=agora,
-        timeframe=settings.analysis_default_timeframe,
-        calendar=calendario,
-    )
+    resultado, calendario = _run_scan(db, agora)
+    observacao = load_observation_config(db)
 
     return templates.TemplateResponse(
         request,
@@ -723,7 +768,100 @@ def dashboard_scanner(
             "calendar_status": calendario.status.value,
             "calendar_message": calendario.message,
             "journal": summarize(db),
+            "observation": observacao,
+            "observation_next_at": observacao.next_due_at(),
+            "interval_min": INTERVAL_MIN_MINUTES,
+            "interval_max": INTERVAL_MAX_MINUTES,
+            "worker_online": heartbeat_is_fresh(load_sync_status(db)),
+            "saved": saved,
+            "error": error,
         },
+    )
+
+
+@router.post("/dashboard/scanner/record")
+def dashboard_scanner_record(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Grava agora a escolha do radar — o que antes exigia `scanner run --record`.
+
+    Varredura sem candidato nao vira registro (regra do proprio diario),
+    entao a tela precisa dizer que nada foi gravado em vez de fingir
+    sucesso.
+    """
+    from app.market.scan_journal import record_scan
+
+    agora = datetime.now(UTC)
+    resultado, _ = _run_scan(db, agora)
+    observacao = record_scan(db, resultado)
+    if observacao is None:
+        db.rollback()
+        return RedirectResponse(
+            url=(
+                "/dashboard/scanner?error="
+                + quote(
+                    "nenhum instrumento aprovado agora — nada foi gravado. "
+                    "Varredura sem candidato nao vira amostra."
+                )
+            ),
+            status_code=303,
+        )
+
+    AuditLogRepository(db).record(
+        action="scanner_observation_record",
+        entity="scanner",
+        detail=(
+            f"{observacao.symbol} nota {observacao.score:.0f} "
+            f"gravado manualmente por {user.username}"
+        ),
+        user_id=user.id,
+    )
+    db.commit()
+    return RedirectResponse(
+        url="/dashboard/scanner?saved=" + quote(f"{observacao.symbol} gravado no diario."),
+        status_code=303,
+    )
+
+
+@router.post("/dashboard/scanner/observation")
+def dashboard_scanner_observation(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    action: str = Form("start"),
+    interval_minutes: int = Form(30),
+) -> RedirectResponse:
+    """Liga/desliga o registro automatico. Quem executa e o worker MT5."""
+    atual = load_observation_config(db)
+    ligado = action == "start"
+    intervalo = clamp_interval(interval_minutes)
+
+    save_observation_config(
+        db,
+        ObservationConfig(
+            enabled=ligado,
+            interval_minutes=intervalo,
+            last_recorded_at=atual.last_recorded_at,
+        ),
+    )
+    AuditLogRepository(db).record(
+        action="scanner_observation_toggle",
+        entity="scanner",
+        detail=(
+            f"modo observacao {'ligado' if ligado else 'desligado'} "
+            f"(a cada {intervalo} min) por {user.username}"
+        ),
+        user_id=user.id,
+    )
+    db.commit()
+
+    mensagem = (
+        f"Modo observacao ligado — o worker grava uma amostra a cada {intervalo} min."
+        if ligado
+        else "Modo observacao desligado."
+    )
+    return RedirectResponse(
+        url="/dashboard/scanner?saved=" + quote(mensagem), status_code=303
     )
 
 
@@ -1368,6 +1506,55 @@ def dashboard_apexflow_save(
     return RedirectResponse(url="/dashboard/apexflow?saved=1", status_code=303)
 
 
+@router.get("/dashboard/settings", response_class=HTMLResponse)
+def dashboard_settings_hub(
+    request: Request,
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Indice de tudo que se configura, com o estado de cada area.
+
+    A configuracao continua morando em telas separadas — juntar tudo em um
+    formulario gigante trocaria "nao acho" por "nao entendo". O que faltava
+    era um lugar que respondesse "onde fica X?" e, de quebra, mostrasse o
+    que ja esta configurado e o que ainda falta.
+    """
+    from app.calendar_feed.factory import get_calendar_provider
+
+    settings = get_settings()
+    repo = SystemSettingRepository(db)
+    trading = load_trading_automation_config(db)
+    sync_config = load_sync_config(db)
+    sync_status = load_sync_status(db)
+    observacao = load_observation_config(db)
+    api = load_api_settings(db, settings)
+    chave = repo.get(AISA_API_KEY_SETTING) or settings.aisa_api_key
+    calendario = get_calendar_provider(settings).fetch_events(
+        now=datetime.now(UTC), horizon_minutes=120
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "dashboard/settings.html",
+        {
+            "user": user,
+            "trading": trading,
+            "worker_online": heartbeat_is_fresh(sync_status),
+            "sync_enabled": sync_config.enabled,
+            "sync_connected": sync_status.connected,
+            "api_configured": bool(chave),
+            "api_budget": get_budget_usage(db, settings),
+            "api_settings": api,
+            "observation": observacao,
+            "calendar_status": calendario.status.value,
+            "calendar_message": calendario.message,
+            "current_mode": get_current_mode(db).value,
+            "broker": settings.broker,
+            "calendar_file": settings.calendar_file_path or "",
+        },
+    )
+
+
 @router.get("/dashboard/settings/aisa", response_class=HTMLResponse)
 def dashboard_settings_aisa(
     request: Request,
@@ -1377,7 +1564,8 @@ def dashboard_settings_aisa(
     error: str | None = None,
 ) -> HTMLResponse:
     settings = get_settings()
-    cache = get_assessment_cache(settings)
+    api = load_api_settings(db, settings)
+    cache = get_assessment_cache(settings, ttl_seconds=api.cache_ttl_seconds)
     repo = SystemSettingRepository(db)
     persisted_key = repo.get(AISA_API_KEY_SETTING)
     persisted_base_url = repo.get(AISA_API_BASE_URL_SETTING)
@@ -1394,10 +1582,15 @@ def dashboard_settings_aisa(
             "masked_key": _mask_api_key(effective_key) if effective_key else None,
             "key_source": key_source,
             "base_url": effective_base_url or "",
-            "cache_ttl_seconds": settings.news_cache_ttl_seconds,
+            "cache_ttl_seconds": api.cache_ttl_seconds,
             "cache_hits": cache.hits,
             "cache_misses": cache.misses,
             "budget": get_budget_usage(db, settings),
+            "api_settings": api,
+            "budget_min": BUDGET_MIN,
+            "budget_max": BUDGET_MAX,
+            "ttl_min": TTL_MIN,
+            "ttl_max": TTL_MAX,
             "saved": saved,
             "error": error,
         },
@@ -1411,9 +1604,20 @@ def dashboard_settings_aisa_save(
     api_key: str = Form(""),
     api_base_url: str = Form(""),
     remove_key: str = Form(""),
+    daily_budget: int | None = Form(None),
+    cache_ttl_seconds: int | None = Form(None),
 ) -> RedirectResponse:
     repo = SystemSettingRepository(db)
     changes: list[str] = []
+
+    problema = validate_api_settings(
+        daily_budget=daily_budget, cache_ttl_seconds=cache_ttl_seconds
+    )
+    if problema:
+        db.rollback()
+        return RedirectResponse(
+            url=f"/dashboard/settings/aisa?error={quote(problema)}", status_code=303
+        )
 
     if remove_key:
         repo.set(
@@ -1437,6 +1641,12 @@ def dashboard_settings_aisa_save(
             description="URL base da API AIsa (Fase 18.6) — configurada via dashboard.",
         )
         changes.append("URL base atualizada")
+
+    changes.extend(
+        save_api_settings(
+            db, daily_budget=daily_budget, cache_ttl_seconds=cache_ttl_seconds
+        )
+    )
 
     if not changes:
         db.rollback()

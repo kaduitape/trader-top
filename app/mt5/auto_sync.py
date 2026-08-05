@@ -523,6 +523,53 @@ class MT5AutoSyncWorker:
         finally:
             session.close()
 
+    def _run_observation_cycle(self, now: datetime) -> None:
+        """Grava uma amostra do radar quando o modo observacao pede.
+
+        Roda independentemente de o robo estar operando: o diario existe
+        justamente para avaliar as escolhas ANTES de confiar nelas, entao
+        exigir automacao ligada inverteria a ordem.
+
+        Falha aqui nunca interrompe o ciclo do worker — observar e trabalho
+        acessorio, e derrubar a sincronizacao de candles por causa dele
+        seria trocar o essencial pelo opcional.
+        """
+        from app.calendar_feed.factory import get_calendar_provider
+        from app.market.scan_journal import record_scan
+        from app.market.scan_settings import (
+            is_due,
+            load_observation_config,
+            mark_recorded,
+        )
+        from app.market.scanner import scan_market
+
+        session = get_session_factory()()
+        try:
+            config = load_observation_config(session)
+            if not is_due(config, now=now):
+                return
+
+            settings = get_settings()
+            resultado = scan_market(
+                session,
+                now=now,
+                timeframe=settings.analysis_default_timeframe,
+                calendar=get_calendar_provider(settings).fetch_events(
+                    now=now, horizon_minutes=120
+                ),
+            )
+            record_scan(session, resultado)
+            # A marca de tempo sobe mesmo quando nao havia candidato: sem
+            # isso, um fim de semana inteiro faria o worker refazer a
+            # varredura a cada ciclo, sem nunca gravar nada.
+            mark_recorded(session, config, now=now)
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception("scanner_observation_failed")
+        finally:
+            session.close()
+
     def run(self) -> None:
         """Executa ate receber encerramento do Windows/processo."""
         status = self._publish(MT5SyncStatus(state="STARTING", worker_online=True))
@@ -592,6 +639,7 @@ class MT5AutoSyncWorker:
                         connection, config, status
                     )
                     trading_error = self._run_trading_cycle(connection)
+                    self._run_observation_cycle(now)
                     combined_error = "; ".join(
                         item for item in (error, trading_error) if item
                     ) or None

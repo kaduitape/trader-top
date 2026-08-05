@@ -105,6 +105,43 @@
                         <input type="url" class="form-control" id="api_base_url" name="api_base_url"
                                value="{{ base_url }}" placeholder="https://api.aisa.one">
                     </div>
+
+                    <hr class="my-4">
+                    <h2 class="h6 fw-semibold mb-1">Quanto a API pode custar por dia</h2>
+                    <p class="small text-muted mb-4">
+                        Estes dois números decidem a sua fatura. Antes eles só existiam no
+                        arquivo <code>.env</code> do servidor; agora valem a partir da próxima
+                        análise, sem reiniciar nada.
+                    </p>
+                    <div class="row g-4 mb-4">
+                        <div class="col-md-6">
+                            <label for="daily_budget" class="form-label fw-semibold">Teto de chamadas por dia</label>
+                            <input type="number" class="form-control" id="daily_budget" name="daily_budget"
+                                   min="{{ budget_min }}" max="{{ budget_max }}" step="1"
+                                   value="{{ api_settings.daily_budget }}">
+                            <div class="form-text">
+                                Cada análise gasta 2 (notícias + fundamentos).
+                                <strong>0 remove o teto</strong> — foi assim que a cota acabou da última vez.
+                                {% if api_settings.budget_source == "env" %}
+                                <span class="d-block">Valor atual vindo do <code>.env</code>.</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="cache_ttl_seconds" class="form-label fw-semibold">Validade do cache (segundos)</label>
+                            <input type="number" class="form-control" id="cache_ttl_seconds" name="cache_ttl_seconds"
+                                   min="{{ ttl_min }}" max="{{ ttl_max }}" step="30"
+                                   value="{{ api_settings.cache_ttl_seconds|round(0)|int }}">
+                            <div class="form-text">
+                                Por quanto tempo a mesma resposta é reaproveitada por moeda.
+                                Maior economiza mais e envelhece o dado; 0 desliga o cache.
+                                {% if api_settings.ttl_source == "env" %}
+                                <span class="d-block">Valor atual vindo do <code>.env</code>.</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="d-flex flex-wrap gap-3 align-items-center">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-shield-check me-2"></i>Salvar configuração</button>
                         {% if masked_key %}

@@ -15,6 +15,9 @@
     </a>
 </header>
 
+{% if error %}<div class="alert alert-danger"><i class="bi bi-exclamation-octagon me-2"></i>{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i>{{ saved }}</div>{% endif %}
+
 {% include "dashboard/_robot_status.html" %}
 
 <div class="tp-stat-grid">
@@ -116,11 +119,20 @@
 </div>
 
 <div class="tp-context-note mt-4">
-    <i class="bi bi-terminal"></i>
-    <div>
-        A coleta continua no host conectado ao MT5:
-        <code>python -m app.cli collect candles --symbol XAUUSD --timeframe M15 --count 500</code>.
-        O sistema nunca preenche lacunas com dados sintéticos.
+    <i class="bi bi-arrow-repeat"></i>
+    <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between w-100">
+        <div>
+            Quem coleta é o conector do MetaTrader, na máquina Windows. Ele já faz isso
+            sozinho no intervalo configurado — o botão apenas antecipa o próximo ciclo.
+            O sistema nunca preenche lacunas com dados sintéticos.
+        </div>
+        <form method="post" action="/dashboard/mt5/action">
+            <input type="hidden" name="requested_action" value="sync">
+            <input type="hidden" name="origin" value="/dashboard/market-data">
+            <button type="submit" class="btn btn-outline-light text-nowrap">
+                <i class="bi bi-arrow-repeat me-2"></i>Atualizar dados agora
+            </button>
+        </form>
     </div>
 </div>
 {% endblock %}

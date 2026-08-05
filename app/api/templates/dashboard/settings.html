@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}Configurações — AI Trader PRO{% endblock %}
+{% block content %}
+<header class="tp-page-header">
+    <div>
+        <span class="tp-eyebrow">Tudo em um índice</span>
+        <h1 class="tp-page-title">Configurações</h1>
+        <p class="tp-page-description">
+            Onde fica cada ajuste e o que já está configurado. Nada aqui exige linha de
+            comando — cada cartão leva direto à tela que muda aquilo.
+        </p>
+    </div>
+    <a href="/dashboard/trading" class="btn btn-outline-light">
+        <i class="bi bi-robot me-2"></i>Operar
+    </a>
+</header>
+
+<div class="row g-4">
+    <div class="col-xl-6">
+        <section class="card h-100">
+            <div class="card-header"><i class="bi bi-robot me-2"></i>Operação do robô</div>
+            <div class="card-body p-4">
+                <div class="tp-pilot-meta mb-4">
+                    <div>
+                        <span>Situação</span>
+                        <strong class="{% if trading.enabled %}text-success{% endif %}">
+                            {{ "Ligado" if trading.enabled else "Parado" }}
+                        </strong>
+                    </div>
+                    <div><span>Modo</span><strong>{{ trading.mode }}</strong></div>
+                    <div><span>Moeda</span><strong>{{ trading.symbol }}</strong></div>
+                </div>
+                <p class="small text-muted">
+                    Moeda, DEMO ou REAL, e os limites de risco (score mínimo, risco por
+                    operação, perda diária máxima, spread máximo).
+                </p>
+                <a href="/dashboard/trading" class="btn btn-primary w-100">
+                    <i class="bi bi-sliders me-2"></i>Abrir operação
+                </a>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-xl-6">
+        <section class="card h-100">
+            <div class="card-header"><i class="bi bi-plug me-2"></i>Conector MetaTrader 5</div>
+            <div class="card-body p-4">
+                <div class="tp-pilot-meta mb-4">
+                    <div>
+                        <span>Worker</span>
+                        <strong class="{% if worker_online %}text-success{% else %}text-danger{% endif %}">
+                            {{ "Online" if worker_online else "Offline" }}
+                        </strong>
+                    </div>
+                    <div>
+                        <span>Sincronização</span>
+                        <strong>{{ "Ativa" if sync_enabled else "Pausada" }}</strong>
+                    </div>
+                    <div>
+                        <span>Corretora</span>
+                        <strong>{{ "Conectado" if sync_connected else "—" }}</strong>
+                    </div>
+                </div>
+                <p class="small text-muted">
+                    Login, servidor, quais moedas e timeframes coletar, intervalo da coleta.
+                    É este worker que executa tudo que roda sozinho.
+                </p>
+                <a href="/dashboard/mt5" class="btn btn-primary w-100">
+                    <i class="bi bi-hdd-network me-2"></i>Abrir conector
+                </a>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-xl-6">
+        <section class="card h-100">
+            <div class="card-header"><i class="bi bi-cloud-check me-2"></i>API de notícias e fundamentos</div>
+            <div class="card-body p-4">
+                <div class="tp-pilot-meta mb-4">
+                    <div>
+                        <span>Chave</span>
+                        <strong class="{% if api_configured %}text-success{% else %}text-danger{% endif %}">
+                            {{ "Configurada" if api_configured else "Ausente" }}
+                        </strong>
+                    </div>
+                    <div>
+                        <span>Gasto hoje</span>
+                        <strong{% if api_budget.exhausted %} class="text-danger"{% endif %}>
+                            {%- if api_budget.limit > 0 -%}
+                            {{ api_budget.calls }}/{{ api_budget.limit }}
+                            {%- else -%}
+                            {{ api_budget.calls }} (sem teto)
+                            {%- endif -%}
+                        </strong>
+                    </div>
+                    <div>
+                        <span>Cache</span>
+                        <strong>
+                            {%- if api_settings.cache_ttl_seconds > 0 -%}
+                            {{ "%.0f"|format(api_settings.cache_ttl_seconds / 60) }} min
+                            {%- else -%}desligado{%- endif -%}
+                        </strong>
+                    </div>
+                </div>
+                <p class="small text-muted">
+                    Chave, URL, <strong>teto diário de chamadas</strong> e validade do cache —
+                    os dois números que decidem quanto a API custa por dia.
+                </p>
+                <a href="/dashboard/settings/aisa" class="btn btn-primary w-100">
+                    <i class="bi bi-key me-2"></i>Abrir API
+                </a>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-xl-6">
+        <section class="card h-100">
+            <div class="card-header"><i class="bi bi-radar me-2"></i>Radar e modo observação</div>
+            <div class="card-body p-4">
+                <div class="tp-pilot-meta mb-4">
+                    <div>
+                        <span>Observação</span>
+                        <strong class="{% if observation.enabled %}text-success{% endif %}">
+                            {{ "Ligada" if observation.enabled else "Desligada" }}
+                        </strong>
+                    </div>
+                    <div>
+                        <span>Intervalo</span>
+                        <strong>{{ observation.interval_minutes }} min</strong>
+                    </div>
+                </div>
+                <p class="small text-muted">
+                    Grava periodicamente o que o radar escolheria, sem operar. É o que permite
+                    responder depois se as escolhas dele valeram a complexidade.
+                </p>
+                <a href="/dashboard/scanner" class="btn btn-primary w-100">
+                    <i class="bi bi-bullseye me-2"></i>Abrir radar
+                </a>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-xl-6">
+        <section class="card h-100">
+            <div class="card-header"><i class="bi bi-calendar-event me-2"></i>Calendário econômico</div>
+            <div class="card-body p-4">
+                <p class="mb-3">
+                    <span class="badge {% if calendar_status == 'OK' %}bg-success{% else %}text-bg-dark{% endif %}">
+                        {{ calendar_status }}
+                    </span>
+                </p>
+                <p class="small text-muted">{{ calendar_message }}</p>
+                <p class="small text-muted mb-0">
+                    O bloqueio antes de evento de alto impacto depende do arquivo exportado
+                    pelo <code>CalendarExporter.mq5</code> no MetaTrader. Sem ele, o robô
+                    continua operando — decisão explícita, não esquecimento.
+                </p>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-xl-6">
+        <section class="card h-100">
+            <div class="card-header"><i class="bi bi-diagram-3 me-2"></i>Modo do sistema</div>
+            <div class="card-body p-4">
+                <div class="tp-pilot-meta mb-4">
+                    <div><span>Atual</span><strong>{{ current_mode }}</strong></div>
+                </div>
+                <p class="small text-muted">
+                    A escada de liberação do sistema inteiro, separada do seletor DEMO/REAL da
+                    tela de operação. Mudar exige digitar o nome do modo.
+                </p>
+                <a href="/dashboard/mode" class="btn btn-primary w-100">
+                    <i class="bi bi-shield-lock me-2"></i>Abrir modo
+                </a>
+            </div>
+        </section>
+    </div>
+</div>
+
+<section class="card mt-4">
+    <div class="card-header"><i class="bi bi-file-earmark-code me-2"></i>O que continua no arquivo</div>
+    <div class="card-body p-4">
+        <p class="small text-muted">
+            Estes ajustes moram no <code>.env</code> do servidor porque mudam a infraestrutura,
+            não a operação — trocá-los pela web exigiria reiniciar o processo, e não é algo que
+            se faz com o robô ligado.
+        </p>
+        <dl class="tp-detail-list">
+            <div><dt>Corretora de execução</dt><dd><code>BROKER={{ broker }}</code></dd></div>
+            <div>
+                <dt>Arquivo do calendário</dt>
+                <dd class="text-break">
+                    {%- if calendar_file -%}<code>{{ calendar_file }}</code>
+                    {%- else -%}não configurado{%- endif -%}
+                </dd>
+            </div>
+            <div><dt>Banco de dados</dt><dd>credenciais <code>DB_*</code></dd></div>
+        </dl>
+    </div>
+</section>
+{% endblock %}

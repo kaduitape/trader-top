@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.database.repositories.system_setting_repository import SystemSettingRepository
 from app.news.aisa import AisaFundamentalsProvider, AisaMarketPulseClient, AisaNewsProvider
+from app.news.api_settings import load_api_settings
 from app.news.budget import BudgetedProvider, read_usage
 from app.news.cache import (
     AssessmentCache,
@@ -38,12 +39,21 @@ _CACHE: AssessmentCache | None = None
 _CACHE_LOCK = Lock()
 
 
-def get_assessment_cache(settings: Settings) -> AssessmentCache:
-    """Instancia unica, criada na primeira chamada com o TTL configurado."""
+def get_assessment_cache(
+    settings: Settings, *, ttl_seconds: float | None = None
+) -> AssessmentCache:
+    """Instancia unica, criada na primeira chamada com o TTL configurado.
+
+    `ttl_seconds` permite passar o valor ja resolvido do painel; sem ele,
+    vale o do `.env`. Mudar o TTL troca o cache inteiro em vez de reaproveitar
+    o antigo — reaproveitar deixaria respostas gravadas sob a regra anterior
+    vivas por mais tempo do que o operador acabou de autorizar.
+    """
     global _CACHE
+    alvo = settings.news_cache_ttl_seconds if ttl_seconds is None else ttl_seconds
     with _CACHE_LOCK:
-        if _CACHE is None or _CACHE.ttl_seconds != settings.news_cache_ttl_seconds:
-            _CACHE = AssessmentCache(ttl_seconds=settings.news_cache_ttl_seconds)
+        if _CACHE is None or _CACHE.ttl_seconds != alvo:
+            _CACHE = AssessmentCache(ttl_seconds=alvo)
         return _CACHE
 
 
@@ -83,16 +93,17 @@ def get_news_provider(session: Session, settings: Settings) -> NewsProvider:
     if not api_key:
         # Sem chave nao existe chamada HTTP para economizar.
         return UnconfiguredNewsProvider()
+    runtime = load_api_settings(session, settings)
     # Ordem importa: cache por fora (acerto nao gasta orcamento), teto
     # diario por dentro (so requisicao real conta).
     return CachedNewsProvider(
         BudgetedProvider(
             AisaNewsProvider(_client(session, settings, api_key)),
-            limit=settings.news_daily_call_budget,
+            limit=runtime.daily_budget,
             skipped_factory=skipped_news,
             kind="noticias",
         ),
-        get_assessment_cache(settings),
+        get_assessment_cache(settings, ttl_seconds=runtime.cache_ttl_seconds),
         namespace=_namespace(session, settings),
     )
 
@@ -101,18 +112,19 @@ def get_fundamentals_provider(session: Session, settings: Settings) -> Fundament
     api_key = _resolve_api_key(session, settings)
     if not api_key:
         return UnconfiguredFundamentalsProvider()
+    runtime = load_api_settings(session, settings)
     return CachedFundamentalsProvider(
         BudgetedProvider(
             AisaFundamentalsProvider(_client(session, settings, api_key)),
-            limit=settings.news_daily_call_budget,
+            limit=runtime.daily_budget,
             skipped_factory=skipped_fundamentals,
             kind="fundamentos",
         ),
-        get_assessment_cache(settings),
+        get_assessment_cache(settings, ttl_seconds=runtime.cache_ttl_seconds),
         namespace=_namespace(session, settings),
     )
 
 
 def get_budget_usage(session: Session, settings: Settings):
     """Consumo do dia, para o painel mostrar quanto ainda resta."""
-    return read_usage(session, limit=settings.news_daily_call_budget)
+    return read_usage(session, limit=load_api_settings(session, settings).daily_budget)

@@ -91,6 +91,12 @@
     </div>
     {% endif %}
 
+    {% if saved %}
+    <div class="alert alert-success" role="alert">
+        <i class="bi bi-check-circle me-2"></i>{{ saved }}
+    </div>
+    {% endif %}
+
     {% if not symbols %}
     <div class="card tp-empty-state">
         <div class="card-body text-center py-5">
@@ -100,7 +106,16 @@
                 Conecte o MetaTrader 5 e colete candles para que os símbolos reais da sua
                 corretora apareçam neste seletor.
             </p>
-            <code>python -m app.cli collect candles --symbol EURUSD --timeframe M15</code>
+            <form method="post" action="/dashboard/mt5/action" class="d-inline">
+                <input type="hidden" name="requested_action" value="sync">
+                <input type="hidden" name="origin" value="/dashboard/analysis">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-arrow-repeat me-2"></i>Sincronizar agora
+                </button>
+            </form>
+            <a href="/dashboard/mt5" class="btn btn-outline-light ms-2">
+                <i class="bi bi-plug me-2"></i>Configurar conector
+            </a>
         </div>
     </div>
     {% elif not report and not error %}

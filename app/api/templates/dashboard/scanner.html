@@ -16,6 +16,9 @@
     </a>
 </header>
 
+{% if error %}<div class="alert alert-danger"><i class="bi bi-exclamation-octagon me-2"></i>{{ error }}</div>{% endif %}
+{% if saved %}<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i>{{ saved }}</div>{% endif %}
+
 {% if best %}
 <section class="tp-pilot-hero is-working">
     <div class="tp-pilot-headline">
@@ -146,13 +149,66 @@
                 </div>
                 {% endif %}
                 {% else %}
-                <p class="small text-muted mb-0">
-                    Nenhuma escolha registrada ainda. Rode
-                    <code>python -m app.cli scanner run --record</code> periodicamente para
-                    acumular amostra e depois comparar: as escolhas do radar foram melhores
-                    que operar um par fixo?
+                <p class="small text-muted">
+                    Nenhuma escolha registrada ainda. O diário serve para responder, semanas
+                    depois: <strong>as escolhas do radar foram melhores que operar um par
+                    fixo?</strong> Sem amostra, não há resposta.
                 </p>
                 {% endif %}
+
+                <hr class="my-4">
+
+                <form method="post" action="/dashboard/scanner/observation" class="mb-3">
+                    <input type="hidden" name="action" value="{{ "stop" if observation.enabled else "start" }}">
+                    <label for="interval_minutes" class="form-label small fw-semibold">
+                        Gravar automaticamente a cada
+                    </label>
+                    <div class="input-group mb-3">
+                        <input type="number" class="form-control" id="interval_minutes"
+                               name="interval_minutes" min="{{ interval_min }}" max="{{ interval_max }}"
+                               step="5" value="{{ observation.interval_minutes }}"
+                               {% if observation.enabled %}readonly{% endif %}>
+                        <span class="input-group-text">min</span>
+                    </div>
+                    <button type="submit" class="btn w-100 {% if observation.enabled %}btn-outline-danger{% else %}btn-primary{% endif %}">
+                        {% if observation.enabled %}
+                        <i class="bi bi-stop-circle me-2"></i>Desligar modo observação
+                        {% else %}
+                        <i class="bi bi-record-circle me-2"></i>Ligar modo observação
+                        {% endif %}
+                    </button>
+                </form>
+
+                {% if observation.enabled %}
+                <div class="tp-pilot-meta mb-3">
+                    <div>
+                        <span>Próxima amostra</span>
+                        <strong>
+                            {%- if observation_next_at -%}
+                            {{ observation_next_at.strftime("%H:%M") }} UTC
+                            {%- else -%}
+                            no próximo ciclo
+                            {%- endif -%}
+                        </strong>
+                    </div>
+                </div>
+                {% if not worker_online %}
+                <div class="tp-context-note mb-3">
+                    <i class="bi bi-plug"></i>
+                    <div>
+                        Quem grava é o conector do MetaTrader, e ele está
+                        <strong>offline</strong>. Nada será registrado até o worker voltar —
+                        o botão abaixo continua funcionando enquanto isso.
+                    </div>
+                </div>
+                {% endif %}
+                {% endif %}
+
+                <form method="post" action="/dashboard/scanner/record">
+                    <button type="submit" class="btn btn-outline-light w-100">
+                        <i class="bi bi-bookmark-plus me-2"></i>Gravar esta varredura agora
+                    </button>
+                </form>
             </div>
         </section>
 

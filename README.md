@@ -490,17 +490,18 @@ negativa forte também conta: comprar EURUSD e vender USDCHF é a mesma aposta.
 
 **Modo observação.** O radar aumenta o número de oportunidades, não a
 qualidade média de cada uma — se a expectativa por operação for negativa,
-varrer o mercado faz perder mais rápido. Por isso o diário
-(`scanner run --record`) grava o que ele *escolheria*, incluindo a margem
-para o segundo colocado: margem baixa significa que o ranking está quase
-sorteando, e a complexidade não se paga.
+varrer o mercado faz perder mais rápido. Por isso o diário grava o que ele
+*escolheria*, incluindo a margem para o segundo colocado: margem baixa
+significa que o ranking está quase sorteando, e a complexidade não se paga.
 
-```powershell
-python -m app.cli scanner run --record --open-symbols EURUSD
-```
+Liga-se em `/dashboard/scanner`, com dois botões: **Ligar modo observação**
+(o worker do MetaTrader passa a gravar uma amostra no intervalo escolhido) e
+**Gravar esta varredura agora**. Acumular amostra dependia de alguém lembrar
+de rodar um comando periodicamente — o que, na prática, significava que a
+amostra nunca existiria. A CLI (`scanner run --record`) continua disponível
+para diagnóstico, mas não é mais o caminho.
 
-Tela em `/dashboard/scanner`. Ela só mostra — quem liga o robô continua sendo
-a tela de operação.
+A tela nunca envia ordem: quem liga o robô continua sendo a tela de operação.
 
 ## Calendário econômico — o portão que nunca disparou
 
