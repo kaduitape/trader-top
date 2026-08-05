@@ -137,6 +137,7 @@ from app.mt5.market_data import (
 )
 from app.mt5.symbol_mapper import fetch_symbol_specification, list_symbols
 from app.mt5.terminal_health import fetch_terminal_health
+from app.news.call_log import ORIGIN_CLI, calls_from
 from app.paper_trading.engine import PaperTradeClosed, PaperTradeOpened, PaperTradingEngine
 from app.risk.config import RiskLimits
 from app.risk.feed_health import check_feed_health
@@ -2423,14 +2424,15 @@ def cmd_analysis_run(args: argparse.Namespace) -> int:
 
     session = get_session_factory()()
     try:
-        report = analyze_symbol(
-            session,
-            symbol=args.symbol,
-            primary_timeframe=timeframe,
-            threshold=threshold,
-            now=datetime.now(UTC),
-            enforce_gates=not args.no_gates,
-        )
+        with calls_from(ORIGIN_CLI):
+            report = analyze_symbol(
+                session,
+                symbol=args.symbol,
+                primary_timeframe=timeframe,
+                threshold=threshold,
+                now=datetime.now(UTC),
+                enforce_gates=not args.no_gates,
+            )
     except SymbolNotFoundError as exc:
         print(f"ERRO: {exc}", file=sys.stderr)
         return 1

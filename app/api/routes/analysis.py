@@ -16,6 +16,7 @@ from app.database.models.user import User
 from app.database.session import get_db
 from app.market.multi_timeframe import SymbolNotFoundError
 from app.mt5.market_data import Timeframe
+from app.news.call_log import ORIGIN_PANEL, calls_from
 from app.services.analysis_service import analyze_symbol
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
@@ -35,14 +36,15 @@ def get_analysis(
     resolved_threshold = threshold if threshold is not None else settings.analysis_default_threshold
 
     try:
-        report = analyze_symbol(
-            db,
-            symbol=symbol,
-            primary_timeframe=resolved_timeframe,
-            enforce_gates=enforce_gates,
-            threshold=resolved_threshold,
-            now=datetime.now(UTC),
-        )
+        with calls_from(ORIGIN_PANEL):
+            report = analyze_symbol(
+                db,
+                symbol=symbol,
+                primary_timeframe=resolved_timeframe,
+                enforce_gates=enforce_gates,
+                threshold=resolved_threshold,
+                now=datetime.now(UTC),
+            )
     except SymbolNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except NotImplementedError as exc:

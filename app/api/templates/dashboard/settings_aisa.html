@@ -160,4 +160,69 @@
         </div>
     </div>
 </div>
+
+<section class="card tp-table-card mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span><i class="bi bi-clock-history me-2"></i>Quando a API foi consultada</span>
+        {% if call_summary.total %}
+        <span class="small text-muted">
+            {{ call_summary.total }} chamadas registradas
+            {%- if call_summary.failures %} · <span class="text-danger">{{ call_summary.failures }} com falha</span>{% endif %}
+            {%- if call_summary.average_ms is not none %} · {{ call_summary.average_ms }} ms em média{% endif %}
+        </span>
+        {% endif %}
+    </div>
+    <div class="card-body p-4 pb-0">
+        <p class="small text-muted">
+            Só chamada de verdade entra aqui. Resposta reaproveitada do cache
+            <strong>não aparece</strong>, de propósito: esta lista é o que a API cobrou, não
+            o que o sistema quis saber. A coluna <strong>Origem</strong> responde a pergunta
+            que apareceu primeiro — se o robô está parado, quem está gastando a cota?
+        </p>
+        {% if call_summary.by_origin %}
+        <div class="tp-pilot-meta mb-2">
+            {% for origem, quantas in call_summary.by_origin %}
+            <div><span>{{ origem }}</span><strong>{{ quantas }}</strong></div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th>Quando (UTC)</th><th>Origem</th><th>Consulta</th>
+                    <th>Moeda</th><th>Resultado</th><th>Tempo</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for call in calls %}
+                <tr>
+                    <td>
+                        {%- if call.moment -%}
+                        {{ call.moment.strftime("%d/%m %H:%M:%S") }}
+                        {%- else -%}—{%- endif -%}
+                    </td>
+                    <td>{{ call.origin }}</td>
+                    <td>{{ call.kind }}</td>
+                    <td class="tp-symbol">{{ call.symbol }}</td>
+                    <td>
+                        <span class="badge {% if call.failed %}bg-danger{% else %}bg-success{% endif %}">
+                            {{ call.outcome }}
+                        </span>
+                    </td>
+                    <td>{{ call.duration_ms }} ms</td>
+                </tr>
+            {% else %}
+                <tr>
+                    <td colspan="6" class="tp-empty-row">
+                        Nenhuma chamada registrada ainda. Ou a chave não está configurada, ou
+                        tudo veio do cache — as duas são boas notícias para a fatura.
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
 {% endblock %}

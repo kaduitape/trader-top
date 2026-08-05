@@ -18,12 +18,16 @@ o operador ve no painel quanto ja gastou.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from time import perf_counter
 
 from sqlalchemy.orm import Session
 
 from app.database.repositories.system_setting_repository import SystemSettingRepository
+
+logger = logging.getLogger(__name__)
 
 BUDGET_SETTING = "marketpulse_daily_usage"
 
@@ -105,30 +109,66 @@ class BudgetedProvider:
     def fetch_assessment(self, symbol: str, *, now: datetime):
         from app.database.session import get_session_factory
 
-        if self._limit <= 0:
-            return self._inner.fetch_assessment(symbol, now=now)
+        if self._limit > 0:
+            session = get_session_factory()()
+            try:
+                usage = read_usage(session, limit=self._limit, now=now)
+                if usage.exhausted:
+                    return self._skipped(
+                        f"Orcamento diario da MarketPulse esgotado "
+                        f"({usage.calls}/{usage.limit} chamadas hoje) — "
+                        f"{self._kind} fora do calculo ate a virada do dia UTC."
+                    )
+            finally:
+                session.close()
+
+        inicio = perf_counter()
+        try:
+            assessment = self._inner.fetch_assessment(symbol, now=now)
+        except Exception:
+            # Falha inesperada tambem consumiu a chamada: registrar so o que
+            # deu certo faria o log mentir justamente no dia problematico.
+            self._register(symbol, outcome="ERRO", inicio=inicio, now=now, contar=False)
+            raise
+
+        self._register(
+            symbol,
+            outcome=str(getattr(assessment, "status", "")) or "OK",
+            inicio=inicio,
+            now=now,
+            contar=self._limit > 0,
+        )
+        return assessment
+
+    def _register(
+        self, symbol: str, *, outcome: str, inicio: float, now: datetime, contar: bool
+    ) -> None:
+        """Contabiliza a chamada e grava o registro dela.
+
+        Sessao propria com commit proprio, pelo mesmo motivo da contagem: e
+        um fato independente do trabalho do chamador e nao pode ser desfeito
+        por um rollback dele. Falha ao registrar nunca derruba a analise — o
+        dado ja foi buscado, e perder a analise por causa do diario seria
+        trocar o essencial pelo acessorio.
+        """
+        from app.database.session import get_session_factory
+        from app.news.call_log import record_api_call
 
         session = get_session_factory()()
         try:
-            usage = read_usage(session, limit=self._limit, now=now)
-            if usage.exhausted:
-                return self._skipped(
-                    f"Orcamento diario da MarketPulse esgotado "
-                    f"({usage.calls}/{usage.limit} chamadas hoje) — "
-                    f"{self._kind} fora do calculo ate a virada do dia UTC."
-                )
-        finally:
-            session.close()
-
-        assessment = self._inner.fetch_assessment(symbol, now=now)
-
-        session = get_session_factory()()
-        try:
-            record_call(session, limit=self._limit, now=now)
+            if contar:
+                record_call(session, limit=self._limit, now=now)
+            record_api_call(
+                session,
+                kind=self._kind,
+                symbol=symbol,
+                outcome=outcome,
+                duration_ms=int((perf_counter() - inicio) * 1000),
+                now=now,
+            )
             session.commit()
         except Exception:
             session.rollback()
-            raise
+            logger.exception("marketpulse_call_log_failed")
         finally:
             session.close()
-        return assessment

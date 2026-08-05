@@ -95,6 +95,12 @@ from app.news.api_settings import (
     save_api_settings,
     validate_api_settings,
 )
+from app.news.call_log import (
+    ORIGIN_PANEL,
+    calls_from,
+    load_calls,
+    summarize_calls,
+)
 from app.news.factory import (
     AISA_API_BASE_URL_SETTING,
     AISA_API_KEY_SETTING,
@@ -556,12 +562,16 @@ def dashboard_analysis(
         )
 
     try:
-        report = analyze_symbol(
-            db,
-            symbol=selected.name,
-            primary_timeframe=selected_timeframe,
-            threshold=operation_config.analysis_threshold,
-        )
+        # Abrir a tela consulta a API paga. Marcar a origem e o que permite
+        # ver depois, no registro, que a cota foi gasta pelo painel e nao
+        # pelo robo.
+        with calls_from(ORIGIN_PANEL):
+            report = analyze_symbol(
+                db,
+                symbol=selected.name,
+                primary_timeframe=selected_timeframe,
+                threshold=operation_config.analysis_threshold,
+            )
     except SymbolNotFoundError as exc:
         error = str(exc)
         status_code = 404
@@ -1587,6 +1597,10 @@ def dashboard_settings_aisa(
             "cache_misses": cache.misses,
             "budget": get_budget_usage(db, settings),
             "api_settings": api,
+            # Mais recente primeiro: quem abre a tela quer saber o que
+            # acabou de gastar cota, nao o que gastou semana passada.
+            "calls": list(reversed(load_calls(db)))[:40],
+            "call_summary": summarize_calls(db),
             "budget_min": BUDGET_MIN,
             "budget_max": BUDGET_MAX,
             "ttl_min": TTL_MIN,

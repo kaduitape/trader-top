@@ -62,6 +62,7 @@ from app.mt5.sync_settings import (
     utc_now_iso,
 )
 from app.mt5.terminal_health import fetch_terminal_health
+from app.news.call_log import ORIGIN_ROBOT, calls_from
 from app.risk.config import RiskLimits
 from app.services.analysis_service import analyze_symbol
 
@@ -466,12 +467,13 @@ class MT5AutoSyncWorker:
                     f"{broker_symbol}/{timeframe.value}."
                 )
 
-            report = analyze_symbol(
-                session,
-                symbol=broker_symbol,
-                primary_timeframe=timeframe,
-                threshold=config.analysis_threshold,
-            )
+            with calls_from(ORIGIN_ROBOT):
+                report = analyze_symbol(
+                    session,
+                    symbol=broker_symbol,
+                    primary_timeframe=timeframe,
+                    threshold=config.analysis_threshold,
+                )
             strategy = AnalysisReportStrategy(
                 report,
                 expected_open_time=candles[-1].open_time,

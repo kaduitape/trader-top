@@ -32,6 +32,7 @@ from app.news.api_settings import (
     CACHE_TTL_SETTING,
     load_api_settings,
 )
+from app.news.call_log import CALL_LOG_SETTING, ORIGIN_PANEL, record_api_call
 
 SYMBOL = "EURUSD"
 
@@ -42,6 +43,7 @@ def _reset(db_session) -> None:
     repo.set(SCAN_OBSERVATION_SETTING, "")
     repo.set(BUDGET_LIMIT_SETTING, "")
     repo.set(CACHE_TTL_SETTING, "")
+    repo.set(CALL_LOG_SETTING, "")
     db_session.commit()
 
 
@@ -281,3 +283,31 @@ def test_the_api_page_exposes_the_budget_field(logged_in) -> None:
     assert response.status_code == 200
     assert 'name="daily_budget"' in response.text
     assert 'name="cache_ttl_seconds"' in response.text
+
+
+def test_the_api_page_shows_when_each_call_happened(logged_in, db_session) -> None:
+    """Sem a origem na tela, o registro nao responde "se esta parado, quem
+    esta gastando?" — que e a pergunta que ele existe para responder."""
+    record_api_call(
+        db_session,
+        kind="noticias",
+        symbol="GBPUSD",
+        outcome="OK",
+        duration_ms=412,
+        origin=ORIGIN_PANEL,
+        now=datetime(2026, 7, 7, 14, 0, tzinfo=UTC),
+    )
+    db_session.commit()
+
+    response = logged_in.get("/dashboard/settings/aisa")
+
+    assert response.status_code == 200
+    assert "GBPUSD" in response.text
+    assert ORIGIN_PANEL in response.text
+    assert "412 ms" in response.text
+
+
+def test_an_empty_log_says_so_instead_of_showing_an_empty_table(logged_in) -> None:
+    response = logged_in.get("/dashboard/settings/aisa")
+
+    assert "Nenhuma chamada registrada ainda" in response.text

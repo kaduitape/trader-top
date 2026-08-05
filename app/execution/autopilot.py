@@ -81,6 +81,7 @@ from app.mt5.account import AccountSnapshot
 from app.mt5.client import MT5ClientProtocol
 from app.mt5.market_data import TIMEFRAME_SECONDS, Timeframe
 from app.mt5.symbol_mapper import fetch_symbol_specification
+from app.news.call_log import ORIGIN_ROBOT, calls_from
 from app.risk.config import RiskLimits
 from app.services.analysis_service import analyze_symbol
 from app.strategies.registry import create_strategy
@@ -819,13 +820,14 @@ def run_autopilot_cycle(
         **playbook_fields,
     )
 
-    report = analyze_symbol(
-        session,
-        symbol=broker_symbol,
-        primary_timeframe=execution_timeframe,
-        threshold=playbook.analysis_threshold,
-        now=resolved_now,
-    )
+    with calls_from(ORIGIN_ROBOT):
+        report = analyze_symbol(
+            session,
+            symbol=broker_symbol,
+            primary_timeframe=execution_timeframe,
+            threshold=playbook.analysis_threshold,
+            now=resolved_now,
+        )
 
     assert playbook.strategy_name is not None  # garantido por `tradeable`
     trigger = create_strategy(
