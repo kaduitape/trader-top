@@ -369,15 +369,37 @@ def analyze_symbol(
     # Portoes que dependem da resposta externa. Os locais ja rodaram acima;
     # aqui so entram os que exigem a API — e apenas quando ela foi de fato
     # consultada, para nao transformar uma economia deliberada em bloqueio.
+    #
+    # A condicao era `!= OK`, e isso tornava o sistema INCAPAZ DE OPERAR
+    # cambio: a API da AIsa nao cobre pares de moedas, entao a resposta
+    # nunca era OK — antes ERROR, depois do guarda de cobertura SKIPPED — e
+    # os dois bloqueios disparavam em toda analise. O robo nunca entrou uma
+    # vez sequer, e nao entraria nunca.
+    #
+    # Agora so ERROR e NOT_CONFIGURED bloqueiam, que sao os dois casos em
+    # que existe uma pergunta sem resposta: a API foi consultada e falhou,
+    # ou nunca foi configurada. SKIPPED e diferente em especie — e uma
+    # decisao consciente do proprio sistema de nao perguntar (fora de
+    # cobertura, bloqueio local ja decidido, orcamento no teto). Nao ha
+    # incerteza a proteger; o fator sai do calculo com o peso redistribuido,
+    # que e o tratamento honesto de "nao sei" e ja estava implementado.
+    #
+    # Isto e coerente com o papel do fator, repetido em todo o sistema:
+    # noticias e fundamentos sao CONFIRMACAO, nunca gatilho. Uma
+    # confirmacao que nao existe para este mercado nao pode ter poder de
+    # veto permanente.
+    _BLOCKING_STATUSES = (ProviderStatus.ERROR, ProviderStatus.NOT_CONFIGURED)
     hard_block_reasons: list[str] = list(local_block_reasons)
     if enforce_gates and not local_block_reasons:
-        if news_assessment.status != ProviderStatus.OK:
+        if news_assessment.status in _BLOCKING_STATUSES:
             hard_block_reasons.append(
-                "Noticias/calendario sem confirmacao valida; entrada bloqueada por seguranca."
+                f"Noticias sem confirmacao valida ({news_assessment.status}); "
+                "entrada bloqueada por seguranca."
             )
-        if fundamentals_assessment.status != ProviderStatus.OK:
+        if fundamentals_assessment.status in _BLOCKING_STATUSES:
             hard_block_reasons.append(
-                "Fundamentos/macro sem confirmacao valida; entrada bloqueada por seguranca."
+                f"Fundamentos sem confirmacao valida ({fundamentals_assessment.status}); "
+                "entrada bloqueada por seguranca."
             )
 
     if hard_block_reasons:
