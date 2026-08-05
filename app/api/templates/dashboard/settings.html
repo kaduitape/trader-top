@@ -15,6 +15,19 @@
     </a>
 </header>
 
+{% if error %}
+<div class="alert alert-danger" role="alert">
+    <i class="bi bi-exclamation-octagon me-2"></i>
+    <span style="white-space: pre-wrap; word-break: break-word;">{{ error }}</span>
+</div>
+{% endif %}
+{% if saved %}
+<div class="alert alert-success" role="alert">
+    <i class="bi bi-check-circle me-2"></i>
+    <span style="white-space: pre-wrap; word-break: break-word;">{{ saved }}</span>
+</div>
+{% endif %}
+
 <div class="row g-4">
     <div class="col-xl-6">
         <section class="card h-100">
@@ -150,11 +163,28 @@
                     </span>
                 </p>
                 <p class="small text-muted">{{ calendar_message }}</p>
-                <p class="small text-muted mb-0">
+                <p class="small text-muted">
                     O bloqueio antes de evento de alto impacto depende do arquivo exportado
-                    pelo <code>CalendarExporter.mq5</code> no MetaTrader. Sem ele, o robô
-                    continua operando — decisão explícita, não esquecimento.
+                    pelo <code>CalendarExporter.mq5</code> no MetaTrader
+                    (<code>scripts\mql5\</code> no projeto). Sem ele, o robô continua
+                    operando — decisão explícita, não esquecimento.
                 </p>
+                {% if calendar_file %}
+                <p class="small text-muted"><code class="text-break">{{ calendar_file }}</code></p>
+                {% endif %}
+                <form method="post" action="/dashboard/settings/calendar/check">
+                    <input type="hidden" name="symbol" value="{{ trading.symbol }}">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search me-2"></i>Verificar calendário agora
+                    </button>
+                </form>
+                <div class="tp-context-note mt-3">
+                    <i class="bi bi-clock-history"></i>
+                    <div>
+                        Verifica sem esperar um evento: descobrir que a integração não
+                        funciona no meio de um payroll é o pior momento possível.
+                    </div>
+                </div>
             </div>
         </section>
     </div>

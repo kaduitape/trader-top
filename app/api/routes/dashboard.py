@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.apexflow.config import load_apexflow_config, save_apexflow_config
 from app.api.dependencies.auth import get_current_user_for_web
 from app.api.templates_engine import templates
+from app.calendar_feed.diagnostics import check_calendar
 from app.core.config import get_settings
 from app.core.enums import SystemMode
 from app.core.system_mode import SystemModeError, validate_transition
@@ -1545,6 +1546,8 @@ def dashboard_settings_hub(
     request: Request,
     user: User = Depends(get_current_user_for_web),
     db: Session = Depends(get_db),
+    saved: str | None = None,
+    error: str | None = None,
 ) -> HTMLResponse:
     """Indice de tudo que se configura, com o estado de cada area.
 
@@ -1585,7 +1588,46 @@ def dashboard_settings_hub(
             "current_mode": get_current_mode(db).value,
             "broker": settings.broker,
             "calendar_file": settings.calendar_file_path or "",
+            "saved": saved,
+            "error": error,
         },
+    )
+
+
+@router.post("/dashboard/settings/calendar/check")
+def dashboard_calendar_check(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    symbol: str = Form(""),
+) -> RedirectResponse:
+    """Verifica o portao de eventos sem esperar um payroll.
+
+    Descobrir que a integracao nao funciona no meio de uma noticia de alto
+    impacto e o pior momento possivel para descobrir.
+    """
+    del user
+    settings = get_settings()
+    alvo = (symbol or load_trading_automation_config(db).symbol).strip().upper()
+    resultado = check_calendar(settings, symbol=alvo)
+
+    if not resultado.usable:
+        detalhe = resultado.message or "fonte indisponivel"
+        return RedirectResponse(
+            url="/dashboard/settings?error="
+            + quote(f"Calendario {resultado.status}: {detalhe}"),
+            status_code=303,
+        )
+
+    if resultado.blocked_now:
+        resumo = f"Calendario OK. AGORA {alvo} estaria BLOQUEADO — {resultado.blocking_reason}"
+    else:
+        proximos = len(resultado.events)
+        resumo = (
+            f"Calendario OK. {alvo} liberado agora; {proximos} evento(s) "
+            f"relevante(s) na janela consultada."
+        )
+    return RedirectResponse(
+        url="/dashboard/settings?saved=" + quote(resumo[:600]), status_code=303
     )
 
 
