@@ -30,6 +30,46 @@
             <section class="card mb-4">
                 <div class="card-header"><i class="bi bi-1-circle me-2"></i>Escolha a moeda</div>
                 <div class="card-body p-4">
+                    <div class="tp-pilot-picker mb-4" role="radiogroup" aria-label="Quem escolhe a moeda">
+                        <span class="tp-pilot-group">Quem escolhe</span>
+                        <div class="tp-pilot-options">
+                            <label class="tp-pilot-option">
+                                <input type="radio" name="symbol_source" value="FIXED"
+                                       {% if not radar_mode %}checked{% endif %}>
+                                <span>
+                                    <i class="bi bi-pin-map"></i>
+                                    <strong>Eu escolho</strong>
+                                    <small>Opera sempre a moeda marcada abaixo</small>
+                                </span>
+                            </label>
+                            <label class="tp-pilot-option">
+                                <input type="radio" name="symbol_source" value="RADAR"
+                                       {% if radar_mode %}checked{% endif %}>
+                                <span>
+                                    <i class="bi bi-broadcast-pin"></i>
+                                    <strong>O radar escolhe</strong>
+                                    <small>Melhor do ranking a cada ciclo; desce para a próxima se não der</small>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    {% if radar_mode %}
+                    <div class="tp-context-note mb-4">
+                        <i class="bi bi-shield-check"></i>
+                        <div>
+                            Com o radar no comando, a moeda marcada abaixo vira o
+                            <strong>ponto de partida</strong> — vale quando o radar não tem
+                            candidato. Duas regras protegem o dinheiro:
+                            <strong>posição aberta congela a escolha</strong> (trocar
+                            abandonaria o trailing dela no meio) e a troca só acontece com
+                            <strong>5 pontos de vantagem</strong>, para não ficar alternando
+                            entre pares empatados. Veja o ranking no
+                            <a href="/dashboard/scanner">Radar</a>.
+                        </div>
+                    </div>
+                    {% endif %}
+
                     <div class="tp-pilot-picker" role="radiogroup" aria-label="Moeda operada">
                         {% set disponivel = [] %}
                         {% for group, items in market_groups.items() %}

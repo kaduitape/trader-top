@@ -63,6 +63,7 @@ from app.execution.autopilot_status import (
     summarize_activities,
 )
 from app.execution.blocker_stats import load_blocker_stats
+from app.execution.symbol_selection import SOURCE_RADAR, SYMBOL_SOURCES
 from app.market.catalog import (
     GROUP_LABELS,
     MARKET_CATALOG,
@@ -1023,6 +1024,7 @@ def _trading_payload(db: Session) -> dict:
         "blockers": blockers,
         "ready_to_start": not blockers,
         "current_mode": get_current_mode(db).value,
+        "radar_mode": config.symbol_source == SOURCE_RADAR,
     }
 
 
@@ -1160,6 +1162,7 @@ def _apply_trading_start(
     enabled: bool,
     redirect_to: str,
     limits: dict | None = None,
+    symbol_source: str | None = None,
 ) -> RedirectResponse:
     """Liga/desliga o robo. Caminho unico, usado pela tela de operacao e
     pelos botoes embutidos em Dados de mercado / Analise PRO.
@@ -1209,6 +1212,11 @@ def _apply_trading_start(
             autopilot=True,
             mode=normalized_mode if normalized_mode in TRADING_MODES else config.mode,
             symbol=normalized_symbol or config.symbol,
+            symbol_source=(
+                symbol_source
+                if symbol_source in SYMBOL_SOURCES
+                else config.symbol_source
+            ),
             **(limits or {}),
         ),
     )
@@ -1243,6 +1251,7 @@ def dashboard_trading_save(
     user: User = Depends(get_current_user_for_web),
     db: Session = Depends(get_db),
     symbol: str = Form(...),
+    symbol_source: str = Form(""),
     mode: str = Form(TRADING_MODE_DEMO),
     action: str = Form("start"),
     timeframe: str | None = Form(None),
@@ -1297,6 +1306,7 @@ def dashboard_trading_save(
         enabled=action == "start",
         redirect_to="/dashboard/trading",
         limits=limits,
+        symbol_source=symbol_source.strip().upper() or None,
     )
 
 

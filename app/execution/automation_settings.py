@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.database.repositories.system_setting_repository import SystemSettingRepository
+from app.execution.symbol_selection import SOURCE_FIXED, SYMBOL_SOURCES
 from app.market.multi_timeframe import ANALYSIS_TIMEFRAMES
 
 TRADING_AUTOMATION_CONFIG_KEY = "trading_automation_config"
@@ -69,6 +70,12 @@ class TradingAutomationConfig:
     quais limites valem."""
 
     symbol: str = "XAUUSD"
+    symbol_source: str = SOURCE_FIXED
+    """FIXED opera sempre `symbol`; RADAR deixa a varredura escolher a cada
+    ciclo, descendo para o proximo candidato quando o primeiro nao serve.
+    `symbol` continua valendo como ponto de partida e como destino quando o
+    radar nao tem candidato."""
+
     timeframe: str = "M15"
     analysis_threshold: float = 90.0
     risk_per_trade_pct: float = 1.0
@@ -124,6 +131,10 @@ def load_trading_automation_config(session: Session) -> TradingAutomationConfig:
     if engine not in ENGINES:
         engine = defaults.engine
 
+    origem = str(data.get("symbol_source", defaults.symbol_source)).strip().upper()
+    if origem not in SYMBOL_SOURCES:
+        origem = defaults.symbol_source
+
     # Valor desconhecido cai para DEMO: um erro de leitura nunca pode
     # resultar em operar com dinheiro real.
     mode = str(data.get("mode", defaults.mode)).strip().upper()
@@ -136,6 +147,7 @@ def load_trading_automation_config(session: Session) -> TradingAutomationConfig:
         mode=mode,
         engine=engine,
         symbol=symbol[:32],
+        symbol_source=origem,
         timeframe=timeframe,
         analysis_threshold=_bounded_float(
             data.get("analysis_threshold"),

@@ -26,6 +26,7 @@ bloqueada incondicionalmente por `app.mt5.orders.send_market_order`.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -72,6 +73,7 @@ from app.execution.engine import (
 )
 from app.execution.playbook import PlaybookDecision, select_playbook
 from app.execution.position_manager import StopMoveOutcome, manage_open_position
+from app.execution.symbol_selection import choose_symbol
 from app.market.catalog import resolve_broker_symbol
 from app.market.features import build_candle_features, required_lookback_bars
 from app.market.regimes import MarketRegime, classify_latest_regime
@@ -606,6 +608,20 @@ def run_autopilot_cycle(
             ),
             level=ActivityLevel.ERROR,
         )
+
+    # O radar escolhe o par do ciclo quando o operador pediu isso. A
+    # escolha acontece DEPOIS das guardas de modo/conta (elas nao dependem
+    # de par) e ANTES de qualquer leitura de mercado, para que todo o resto
+    # do ciclo trabalhe um alvo so.
+    escolha = choose_symbol(
+        session,
+        configured_symbol=config.symbol,
+        source=config.symbol_source,
+        available_symbols=available_symbols,
+        strategy_name=AUTOPILOT_STRATEGY_NAME,
+        now=resolved_now,
+    )
+    config = dataclasses.replace(config, symbol=escolha.symbol)
 
     broker_symbol = resolve_broker_symbol(config.symbol, available_symbols)
     if broker_symbol is None:
