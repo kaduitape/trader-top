@@ -22,6 +22,11 @@ from app.news.cache import (
     CachedNewsProvider,
 )
 from app.news.provider import FundamentalsProvider, NewsProvider
+from app.news.store import (
+    KIND_FUNDAMENTALS,
+    KIND_NEWS,
+    StoredAssessmentProvider,
+)
 from app.news.unconfigured import (
     UnconfiguredFundamentalsProvider,
     UnconfiguredNewsProvider,
@@ -94,14 +99,25 @@ def get_news_provider(session: Session, settings: Settings) -> NewsProvider:
         # Sem chave nao existe chamada HTTP para economizar.
         return UnconfiguredNewsProvider()
     runtime = load_api_settings(session, settings)
-    # Ordem importa: cache por fora (acerto nao gasta orcamento), teto
-    # diario por dentro (so requisicao real conta).
+    # A ORDEM e a economia inteira. De fora para dentro:
+    #   memoria  -> resposta do mesmo processo, instantanea
+    #   banco    -> resposta do DIA, compartilhada entre web e worker e
+    #               sobrevivendo a reinicio; guarda tambem as falhas
+    #   orcamento-> teto do que resta
+    #   HTTP     -> a unica camada que custa dinheiro
+    # Cada camada so existe porque a de dentro custa mais que ela.
     return CachedNewsProvider(
-        BudgetedProvider(
-            AisaNewsProvider(_client(session, settings, api_key)),
-            limit=runtime.daily_budget,
-            skipped_factory=skipped_news,
-            kind="noticias",
+        StoredAssessmentProvider(
+            BudgetedProvider(
+                AisaNewsProvider(_client(session, settings, api_key)),
+                limit=runtime.daily_budget,
+                skipped_factory=skipped_news,
+                kind=KIND_NEWS,
+            ),
+            namespace=_namespace(session, settings),
+            kind=KIND_NEWS,
+            refresh_hours=runtime.refresh_hours,
+            retry_after_minutes=runtime.retry_after_minutes,
         ),
         get_assessment_cache(settings, ttl_seconds=runtime.cache_ttl_seconds),
         namespace=_namespace(session, settings),
@@ -114,11 +130,17 @@ def get_fundamentals_provider(session: Session, settings: Settings) -> Fundament
         return UnconfiguredFundamentalsProvider()
     runtime = load_api_settings(session, settings)
     return CachedFundamentalsProvider(
-        BudgetedProvider(
-            AisaFundamentalsProvider(_client(session, settings, api_key)),
-            limit=runtime.daily_budget,
-            skipped_factory=skipped_fundamentals,
-            kind="fundamentos",
+        StoredAssessmentProvider(
+            BudgetedProvider(
+                AisaFundamentalsProvider(_client(session, settings, api_key)),
+                limit=runtime.daily_budget,
+                skipped_factory=skipped_fundamentals,
+                kind=KIND_FUNDAMENTALS,
+            ),
+            namespace=_namespace(session, settings),
+            kind=KIND_FUNDAMENTALS,
+            refresh_hours=runtime.refresh_hours,
+            retry_after_minutes=runtime.retry_after_minutes,
         ),
         get_assessment_cache(settings, ttl_seconds=runtime.cache_ttl_seconds),
         namespace=_namespace(session, settings),

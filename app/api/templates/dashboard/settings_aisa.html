@@ -89,10 +89,11 @@
                 <div class="tp-context-note mt-3">
                     <i class="bi bi-piggy-bank"></i>
                     <div>
-                        Cada análise consome <strong>duas</strong> chamadas (notícias e
-                        fundamentos). Uma resposta boa é reaproveitada pelo prazo acima, por
-                        moeda — recarregar a tela de análise deixou de gastar cota. Falha
-                        nunca é guardada, e a resposta reaproveitada informa a própria idade.
+                        Cada leitura nova consome <strong>duas</strong> chamadas (notícias e
+                        fundamentos), <strong>uma vez por dia por moeda</strong>. Entre uma
+                        leitura e outra tudo vem do banco — recarregar a tela ou rodar o robô
+                        não gasta cota. Falha também fica guardada, por menos tempo: sem isso
+                        um endpoint quebrado era tentado a cada ciclo até a cota acabar.
                     </div>
                 </div>
                 {% endif %}
@@ -154,6 +155,30 @@
                         </div>
                     </div>
 
+                    <div class="row g-4 mb-4">
+                        <div class="col-md-6">
+                            <label for="refresh_hours" class="form-label fw-semibold">Ler de novo a cada (horas)</label>
+                            <input type="number" class="form-control" id="refresh_hours" name="refresh_hours"
+                                   min="{{ refresh_min }}" max="{{ refresh_max }}" step="1"
+                                   value="{{ api_settings.refresh_hours }}">
+                            <div class="form-text">
+                                <strong>24 = uma leitura por dia por moeda.</strong> A resposta fica
+                                guardada no banco e é servida de lá — compartilhada entre o painel e
+                                o robô, e sobrevive a reinício.
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="retry_after_minutes" class="form-label fw-semibold">Após falha, esperar (minutos)</label>
+                            <input type="number" class="form-control" id="retry_after_minutes" name="retry_after_minutes"
+                                   min="{{ retry_min }}" max="{{ retry_max }}" step="5"
+                                   value="{{ api_settings.retry_after_minutes }}">
+                            <div class="form-text">
+                                Este era o buraco: falha <strong>não</strong> era guardada, então cada
+                                ciclo do robô tentava de novo — a cada 15 segundos, até a cota acabar.
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="d-flex flex-wrap gap-3 align-items-center">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-shield-check me-2"></i>Salvar configuração</button>
                         {% if masked_key %}
@@ -188,6 +213,49 @@
         </div>
     </div>
 </div>
+
+<section class="card tp-table-card mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span><i class="bi bi-archive me-2"></i>Dados guardados</span>
+        <form method="post" action="/dashboard/settings/aisa/clear">
+            <button type="submit" class="btn btn-sm btn-outline-light">
+                <i class="bi bi-arrow-clockwise me-2"></i>Limpar e ler de novo
+            </button>
+        </form>
+    </div>
+    <div class="card-body p-4 pb-0">
+        <p class="small text-muted mb-0">
+            O que o robô está usando agora, sem pagar por isso. Cada linha é uma resposta
+            guardada no banco: enquanto estiver dentro do prazo acima, nenhuma chamada nova
+            é feita. Limpe apenas quando quiser forçar leitura nova — por exemplo depois de
+            corrigir a chave.
+        </p>
+    </div>
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr><th>Guardado em (UTC)</th><th>Consulta</th><th>Moeda</th><th>Resultado</th><th>Nota</th></tr>
+            </thead>
+            <tbody>
+            {% for kind, symbol, entry in stored %}
+                <tr>
+                    <td>{{ entry.fetched_at.strftime("%d/%m %H:%M") }}</td>
+                    <td>{{ kind }}</td>
+                    <td class="tp-symbol">{{ symbol }}</td>
+                    <td>
+                        <span class="badge {% if entry.ok %}bg-success{% else %}bg-danger{% endif %}">
+                            {{ entry.status }}
+                        </span>
+                    </td>
+                    <td>{{ "%.0f"|format(entry.score) }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5" class="tp-empty-row">Nada guardado ainda — a próxima análise vai ler da API e guardar aqui.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
 
 <section class="card tp-table-card mt-4">
     <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">

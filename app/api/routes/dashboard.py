@@ -90,6 +90,10 @@ from app.mt5.sync_settings import (
 from app.news.api_settings import (
     BUDGET_MAX,
     BUDGET_MIN,
+    REFRESH_MAX_HOURS,
+    REFRESH_MIN_HOURS,
+    RETRY_MAX_MINUTES,
+    RETRY_MIN_MINUTES,
     TTL_MAX,
     TTL_MIN,
     load_api_settings,
@@ -110,6 +114,7 @@ from app.news.factory import (
     get_budget_usage,
     reset_assessment_cache,
 )
+from app.news.store import clear_store, list_entries
 from app.services.analysis_service import AnalysisReport, analyze_symbol
 
 router = APIRouter(tags=["dashboard"])
@@ -1609,6 +1614,11 @@ def dashboard_settings_aisa(
             # Mais recente primeiro: quem abre a tela quer saber o que
             # acabou de gastar cota, nao o que gastou semana passada.
             "calls": list(reversed(load_calls(db)))[:40],
+            "stored": list_entries(db),
+            "refresh_min": REFRESH_MIN_HOURS,
+            "refresh_max": REFRESH_MAX_HOURS,
+            "retry_min": RETRY_MIN_MINUTES,
+            "retry_max": RETRY_MAX_MINUTES,
             "call_summary": summarize_calls(db),
             "budget_min": BUDGET_MIN,
             "budget_max": BUDGET_MAX,
@@ -1617,6 +1627,33 @@ def dashboard_settings_aisa(
             "saved": saved,
             "error": error,
         },
+    )
+
+
+@router.post("/dashboard/settings/aisa/clear")
+def dashboard_settings_aisa_clear(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Descarta o que esta guardado e força leitura nova na proxima analise.
+
+    Existe para o caso legitimo de "consertei a chave, quero testar agora"
+    — sem isso, uma falha guardada seguraria a proxima tentativa por uma
+    hora inteira depois de o problema ja estar resolvido.
+    """
+    clear_store(db)
+    reset_assessment_cache()
+    AuditLogRepository(db).record(
+        action="aisa_store_clear",
+        entity="aisa_api",
+        detail=f"armazenamento MarketPulse limpo por {user.username}",
+        user_id=user.id,
+    )
+    db.commit()
+    return RedirectResponse(
+        url="/dashboard/settings/aisa?saved="
+        + quote("Armazenamento limpo — a proxima analise le da API de novo."),
+        status_code=303,
     )
 
 
@@ -1675,12 +1712,17 @@ def dashboard_settings_aisa_save(
     remove_key: str = Form(""),
     daily_budget: int | None = Form(None),
     cache_ttl_seconds: int | None = Form(None),
+    refresh_hours: int | None = Form(None),
+    retry_after_minutes: int | None = Form(None),
 ) -> RedirectResponse:
     repo = SystemSettingRepository(db)
     changes: list[str] = []
 
     problema = validate_api_settings(
-        daily_budget=daily_budget, cache_ttl_seconds=cache_ttl_seconds
+        daily_budget=daily_budget,
+        cache_ttl_seconds=cache_ttl_seconds,
+        refresh_hours=refresh_hours,
+        retry_after_minutes=retry_after_minutes,
     )
     if problema:
         db.rollback()
@@ -1713,7 +1755,11 @@ def dashboard_settings_aisa_save(
 
     changes.extend(
         save_api_settings(
-            db, daily_budget=daily_budget, cache_ttl_seconds=cache_ttl_seconds
+            db,
+            daily_budget=daily_budget,
+            cache_ttl_seconds=cache_ttl_seconds,
+            refresh_hours=refresh_hours,
+            retry_after_minutes=retry_after_minutes,
         )
     )
 
