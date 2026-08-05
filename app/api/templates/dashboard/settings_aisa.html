@@ -10,6 +10,24 @@
     <a href="/dashboard/analysis" class="btn btn-outline-light"><i class="bi bi-stars me-2"></i>Voltar à análise</a>
 </header>
 
+<div class="alert alert-warning d-flex gap-3 align-items-start" role="alert">
+    <i class="bi bi-exclamation-triangle-fill fs-4"></i>
+    <div>
+        <strong>Esta API não cobre câmbio.</strong>
+        Os endpoints usados aqui (<code>financial/news</code> e
+        <code>financial/financial-metrics</code>) são de <strong>mercado acionário</strong> —
+        "métricas financeiras anuais" descrevem uma empresa: receita, margem, alavancagem.
+        <strong>EURUSD não tem balanço</strong>, e nenhuma chave faz esse dado existir.
+        <div class="mt-2">
+            Era isto que consumia a cota: cada análise pedia duas coisas impossíveis e
+            recebia erro. Agora a pergunta é cortada antes de sair — <strong>custo zero</strong> —
+            e os fatores Notícias e Fundamentos saem do cálculo com o peso redistribuído
+            entre os que têm dado. O robô não fica pior por isso: ele já não recebia
+            informação nenhuma daqui.
+        </div>
+    </div>
+</div>
+
 {% if error %}
 <div class="alert alert-danger" role="alert">
     <i class="bi bi-exclamation-octagon me-2"></i>

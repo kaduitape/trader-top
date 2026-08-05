@@ -649,26 +649,49 @@ descobre o nome real, incluindo sufixos, e carrega a matriz
 
 Configure o MarketPulse em **API AIsa** ou pela variável `AISA_API_KEY`.
 
-Cada análise consome **duas** chamadas da MarketPulse (notícias e
-fundamentos). Três camadas protegem a cota, nesta ordem:
+### A API não cobre câmbio — leia antes de assinar
 
-1. **Os portões locais rodam antes da API.** Cobertura de dados e volume são
-   verificados com o que já está no banco; se a entrada já está bloqueada, a
-   MarketPulse **não é consultada** — era isso que queimava crédito em
-   análise natimorta.
-2. **Cache por moeda** (`NEWS_CACHE_TTL_SECONDS`, padrão 10 min).
-3. **Teto diário** (`NEWS_DAILY_CALL_BUDGET`, padrão 300), contado no banco e
-   compartilhado entre o servidor web e o conector Windows. Ao atingir o
-   limite, os fatores externos saem do cálculo em vez de gastar mais.
+Os endpoints usados (`financial/news`, `financial/financial-metrics`) são de
+**mercado acionário**. "Métricas financeiras anuais" descrevem uma empresa:
+receita, margem, alavancagem. **EURUSD não tem balanço.** Nenhuma chave faz
+esse dado existir, e a cobertura anunciada da AIsa para essa família é ações
+e cripto — não pares de moedas nem metais.
 
-O consumo do dia aparece em `/dashboard/settings/aisa`. Por isso a
-resposta boa fica em cache por moeda, dentro do processo, por
-`NEWS_CACHE_TTL_SECONDS` (padrão 10 minutos; `0` desliga). Duas regras
-que valem mais que a economia: **falha nunca entra no cache** — congelar
-uma instabilidade da API esconderia o problema por dez minutos — e a
-resposta reaproveitada **declara a própria idade** na tela, porque o
-sistema nunca apresenta dado velho como se fosse fresco. Ver
-`app/news/cache.py`.
+Era isso que consumia o crédito: cada análise pedia duas coisas impossíveis,
+recebia erro, e — como falha não era guardada — tentava de novo no ciclo
+seguinte. `app/news/coverage.py` corta a pergunta antes de sair, com custo
+zero. Os fatores Notícias e Fundamentos saem do cálculo com o peso
+redistribuído (`SKIPPED`, não `ERROR`: não houve falha da API). O robô não
+piora com isso — ele já não recebia informação nenhuma dali.
+
+**Para um sistema de câmbio, essa assinatura hoje não entrega nada.** O
+substituto correto é o calendário econômico (`docs/calendar.md`), que é
+gratuito e vem do próprio MetaTrader.
+
+### Camadas de proteção da cota
+
+Cada leitura nova consome **duas** chamadas. Quatro camadas protegem, de fora
+para dentro — cada uma existe porque a de dentro custa mais que ela:
+
+1. **Cobertura** (`app/news/coverage.py`): a pergunta faz sentido para este
+   ativo? Custo zero.
+2. **Portões locais antes da API.** Se a entrada já está bloqueada por
+   cobertura de dados ou volume, a MarketPulse não é consultada.
+3. **Armazenamento no banco** (`app/news/store.py`): uma leitura por dia por
+   moeda, compartilhada entre o painel e o conector Windows e sobrevivendo a
+   reinício. Guarda **também as falhas**, por uma janela menor (60 min) — sem
+   isso um endpoint quebrado era tentado a cada ciclo de 15 s.
+4. **Teto diário** (`NEWS_DAILY_CALL_BUDGET`, padrão 300), contado no banco.
+   Ao atingir o limite, os fatores externos saem do cálculo.
+
+Há ainda um cache de memória por processo (`NEWS_CACHE_TTL_SECONDS`) como
+atalho barato. Prazos, consumo do dia, o que está guardado e **o registro de
+cada chamada real, com origem** (painel, robô ou linha de comando) aparecem
+em `/dashboard/settings/aisa`, junto com um botão de **Testar conexão** que
+mostra a resposta crua da API.
+
+A resposta reaproveitada **declara a própria idade** (`[guardado há 2 h]`):
+o sistema nunca apresenta dado velho como se fosse fresco.
 
 Ver `docs/dashboard.md` para autenticação, rotas e detalhes operacionais.
 

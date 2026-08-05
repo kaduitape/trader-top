@@ -75,7 +75,9 @@ def test_every_caller_shares_the_same_cache(db_session) -> None:
     first = get_news_provider(db_session, settings)
     second = get_news_provider(db_session, settings)
 
-    assert first._cache is second._cache  # type: ignore[attr-defined]
+    # O guarda de cobertura envolve o provedor com cache; o cache
+    # compartilhado esta uma camada abaixo dele.
+    assert first._inner._cache is second._inner._cache  # type: ignore[attr-defined]
 
 
 def test_the_configured_ttl_reaches_the_cache(db_session) -> None:
@@ -99,6 +101,10 @@ def test_a_new_request_reuses_the_answer_instead_of_calling_the_api_again(
 ) -> None:
     """O cenario real: cada carregamento da tela de analise constroi um
     provedor novo. Sem cache compartilhado, cada F5 era uma chamada HTTP.
+
+    Usa um ticker de acao de proposito: par de moedas nao chega mais a
+    camada HTTP (a API da AIsa nao cobre cambio), entao mediria o guarda de
+    cobertura em vez do cache.
     """
     calls: list[str] = []
 
@@ -114,8 +120,8 @@ def test_a_new_request_reuses_the_answer_instead_of_calling_the_api_again(
     settings = _settings(aisa_api_key="some-real-key")
     now = datetime.now(UTC)
 
-    get_news_provider(db_session, settings).fetch_assessment("EURUSD", now=now)
-    get_news_provider(db_session, settings).fetch_assessment("EURUSD", now=now)
-    get_news_provider(db_session, settings).fetch_assessment("EURUSD", now=now)
+    get_news_provider(db_session, settings).fetch_assessment("AAPL", now=now)
+    get_news_provider(db_session, settings).fetch_assessment("AAPL", now=now)
+    get_news_provider(db_session, settings).fetch_assessment("AAPL", now=now)
 
     assert len(calls) == 1
