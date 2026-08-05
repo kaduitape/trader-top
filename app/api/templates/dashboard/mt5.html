@@ -127,7 +127,7 @@
     </div>
 </div>
 
-{% if not worker_online %}
+{% if not worker_online and not ever_installed %}
 <section class="tp-connector-setup mb-4">
     <div class="tp-setup-number">1</div>
     <div>
@@ -144,7 +144,46 @@
     <div class="tp-setup-flow">
         <span><i class="bi bi-check2"></i> Instala isoladamente</span>
         <span><i class="bi bi-check2"></i> Inicia no login</span>
-        <span><i class="bi bi-check2"></i> Reconecta sozinho</span>
+        <span><i class="bi bi-check2"></i> Volta sozinho se cair</span>
+    </div>
+</section>
+{% elif not worker_online %}
+{# Ja instalado, so parou de responder. Mandar reinstalar aqui seria refazer
+   o ambiente Python inteiro por causa de um processo que caiu. #}
+<section class="card border-warning mb-4">
+    <div class="card-header">
+        <i class="bi bi-plug me-2"></i>Conector sem resposta
+        {% if last_heartbeat %}<span class="text-muted small ms-2">último sinal {{ last_heartbeat }}</span>{% endif %}
+    </div>
+    <div class="card-body p-4">
+        <p class="mb-3">
+            O conector <strong>já está instalado</strong> nesta máquina — não reinstale.
+            Ele foi configurado para voltar sozinho em até <strong>5 minutos</strong>.
+            Se você acabou de ver a queda, esperar costuma resolver.
+        </p>
+        {% if status.last_error %}
+        <div class="tp-sync-error mb-3">
+            <i class="bi bi-exclamation-octagon"></i>
+            <span>{{ status.last_error }}</span>
+        </div>
+        {% endif %}
+        <p class="small text-muted mb-2">Se não voltar, na máquina Windows:</p>
+        <ol class="small text-muted">
+            <li>Confirme que o <strong>MetaTrader 5 está aberto e logado</strong> — sem o terminal, o conector não tem com quem falar.</li>
+            <li>Rode <code>scripts\reiniciar_conector_mt5.cmd</code> (dois cliques).</li>
+            <li>Se o erro persistir, veja o log em <code>logs\</code> na pasta do projeto.</li>
+        </ol>
+        <div class="tp-context-note">
+            <i class="bi bi-display"></i>
+            <div>
+                <strong>Num VPS:</strong> feche a janela do RDP com o <strong>X</strong> (desconectar).
+                Usar <em>Fazer logoff</em> encerra a sessão do Windows e derruba o MetaTrader —
+                e sem terminal o conector fica offline até você entrar de novo.
+            </div>
+        </div>
+        <a class="btn btn-sm btn-outline-light mt-3" href="/dashboard/mt5/installer">
+            <i class="bi bi-windows me-2"></i>Reinstalar mesmo assim
+        </a>
     </div>
 </section>
 {% endif %}

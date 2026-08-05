@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import os
-import signal
 import socket
 from collections.abc import Callable
 from dataclasses import replace
@@ -19,7 +18,6 @@ from threading import Event
 
 from app.core.config import get_settings
 from app.core.enums import SystemMode
-from app.core.logging import configure_logging
 from app.database.repositories.candle_repository import CandleRepository
 from app.database.repositories.data_quality_repository import DataQualityEventRepository
 from app.database.repositories.symbol_repository import SymbolRepository
@@ -83,6 +81,7 @@ class MT5AutoSyncWorker:
         self._stop = stop_event or Event()
         self._connection: MT5Connection | None = None
         self._worker_id = f"{socket.gethostname()}:{os.getpid()}"
+        self._next_sync_at = datetime.min.replace(tzinfo=UTC)
 
     def stop(self) -> None:
         self._stop.set()
@@ -572,127 +571,180 @@ class MT5AutoSyncWorker:
         finally:
             session.close()
 
-    def run(self) -> None:
-        """Executa ate receber encerramento do Windows/processo."""
-        status = self._publish(MT5SyncStatus(state="STARTING", worker_online=True))
-        next_sync_at = datetime.min.replace(tzinfo=UTC)
-        try:
-            while not self._stop.is_set():
-                config, persisted_status = self._read_control()
-                status = replace(
-                    persisted_status,
-                    worker_online=True,
-                    worker_id=self._worker_id,
-                    selected_symbols=len(config.symbols),
-                )
-                test_pending = (
-                    bool(config.test_request_id)
-                    and config.test_request_id != status.handled_test_request_id
-                )
-                manual_sync_pending = (
-                    bool(config.sync_request_id)
-                    and config.sync_request_id != status.handled_sync_request_id
-                )
+    def _tick(self) -> None:
+        """Um ciclo do laco.
 
-                if not config.enabled and not test_pending:
-                    self._disconnect()
-                    status = self._publish(
-                        replace(status, state="PAUSED", connected=False, last_error=None)
-                    )
-                    self._stop.wait(5)
-                    continue
+        Extraido de `run` de proposito: assim uma falha aqui custa UM ciclo,
+        e nao o processo inteiro. Antes, qualquer excecao — banco fora do ar
+        por um segundo, terminal recusando uma chamada — subia ate o topo e
+        matava o conector; o Windows reiniciava algumas vezes e desistia, e
+        a unica saida visivel virava reinstalar.
+        """
+        config, persisted_status = self._read_control()
+        status = replace(
+            persisted_status,
+            worker_online=True,
+            worker_id=self._worker_id,
+            selected_symbols=len(config.symbols),
+        )
+        test_pending = (
+            bool(config.test_request_id)
+            and config.test_request_id != status.handled_test_request_id
+        )
+        manual_sync_pending = (
+            bool(config.sync_request_id)
+            and config.sync_request_id != status.handled_sync_request_id
+        )
 
-                status = self._publish(replace(status, state="CONNECTING", last_error=None))
-                connection = self._ensure_connection()
-                if connection is None:
-                    status = self._publish(
-                        replace(
-                            status,
-                            state="ERROR",
-                            connected=False,
-                            last_error=(
-                                "Nao foi possivel conectar ao terminal MT5. "
-                                "Confirme se ele esta aberto e autenticado no Windows."
-                            ),
-                            handled_test_request_id=(
-                                config.test_request_id if test_pending else status.handled_test_request_id
-                            ),
-                        )
-                    )
-                    self._stop.wait(min(config.interval_seconds, 30))
-                    continue
-
-                status = self._terminal_status(status, connection, state="ONLINE")
-                if test_pending:
-                    status = replace(
-                        status,
-                        handled_test_request_id=config.test_request_id,
-                    )
-                    self._publish(status)
-                    if not config.enabled:
-                        self._disconnect()
-                        self._stop.wait(2)
-                        continue
-
-                now = datetime.now(UTC)
-                if manual_sync_pending or now >= next_sync_at:
-                    status = self._publish(replace(status, state="SYNCING", connected=True))
-                    ready, candles, ticks, error = self._sync_cycle(
-                        connection, config, status
-                    )
-                    trading_error = self._run_trading_cycle(connection)
-                    self._run_observation_cycle(now)
-                    combined_error = "; ".join(
-                        item for item in (error, trading_error) if item
-                    ) or None
-                    status = self._publish(
-                        replace(
-                            status,
-                            state="ONLINE" if ready else "ERROR",
-                            connected=True,
-                            last_sync_at=utc_now_iso(),
-                            ready_symbols=ready,
-                            candles_inserted=candles,
-                            ticks_inserted=ticks,
-                            last_error=combined_error,
-                            handled_sync_request_id=(
-                                config.sync_request_id
-                                if manual_sync_pending
-                                else status.handled_sync_request_id
-                            ),
-                        )
-                    )
-                    next_sync_at = now + timedelta(seconds=config.interval_seconds)
-                else:
-                    status = self._publish(replace(status, state="ONLINE", connected=True))
-                self._stop.wait(min(5, config.interval_seconds))
-        finally:
+        if not config.enabled and not test_pending:
             self._disconnect()
+            status = self._publish(
+                replace(status, state="PAUSED", connected=False, last_error=None)
+            )
+            self._stop.wait(5)
+            return
+
+        status = self._publish(replace(status, state="CONNECTING", last_error=None))
+        connection = self._ensure_connection()
+        if connection is None:
+            status = self._publish(
+                replace(
+                    status,
+                    state="ERROR",
+                    connected=False,
+                    last_error=(
+                        "Nao foi possivel conectar ao terminal MT5. "
+                        "Confirme se ele esta aberto e autenticado no Windows."
+                    ),
+                    handled_test_request_id=(
+                        config.test_request_id if test_pending else status.handled_test_request_id
+                    ),
+                )
+            )
+            self._stop.wait(min(config.interval_seconds, 30))
+            return
+
+        status = self._terminal_status(status, connection, state="ONLINE")
+        if test_pending:
+            status = replace(
+                status,
+                handled_test_request_id=config.test_request_id,
+            )
+            self._publish(status)
+            if not config.enabled:
+                self._disconnect()
+                self._stop.wait(2)
+                return
+
+        now = datetime.now(UTC)
+        if manual_sync_pending or now >= self._next_sync_at:
+            status = self._publish(replace(status, state="SYNCING", connected=True))
+            ready, candles, ticks, error = self._sync_cycle(
+                connection, config, status
+            )
+            # Bater o coracao entre as etapas longas. Analisar consulta a
+            # API paga (dois pedidos, ate 10s cada) e observar varre o
+            # mercado inteiro: sem isto o painel declara o conector
+            # offline aos 90s de silencio enquanto ele esta, na verdade,
+            # trabalhando.
+            status = self._publish(replace(status, state="SYNCING", connected=True))
+            trading_error = self._run_trading_cycle(connection)
+
+            status = self._publish(replace(status, state="SYNCING", connected=True))
+            self._run_observation_cycle(now)
+
+            combined_error = "; ".join(
+                item for item in (error, trading_error) if item
+            ) or None
+            status = self._publish(
+                replace(
+                    status,
+                    state="ONLINE" if ready else "ERROR",
+                    connected=True,
+                    last_sync_at=utc_now_iso(),
+                    ready_symbols=ready,
+                    candles_inserted=candles,
+                    ticks_inserted=ticks,
+                    last_error=combined_error,
+                    handled_sync_request_id=(
+                        config.sync_request_id
+                        if manual_sync_pending
+                        else status.handled_sync_request_id
+                    ),
+                )
+            )
+            self._next_sync_at = now + timedelta(seconds=config.interval_seconds)
+        else:
+            status = self._publish(replace(status, state="ONLINE", connected=True))
+
+        self._stop.wait(min(5, config.interval_seconds))
+
+    def run(self) -> None:
+        """Executa ate receber encerramento do Windows/processo.
+
+        Supervisiona `_tick`: nada alem de `stop()` encerra este laco. O
+        conector existe para ficar de pe sozinho — se ele precisa de alguem
+        para reinicia-lo, ele nao esta fazendo o trabalho dele.
+        """
+        try:
+            self._publish(MT5SyncStatus(state="STARTING", worker_online=True))
+        except Exception:
+            logger.exception("mt5_auto_sync_initial_status_failed")
+
+        falhas = 0
+        while not self._stop.is_set():
             try:
-                self._publish(replace(status, state="OFFLINE", worker_online=False, connected=False))
-            except Exception:
-                logger.exception("mt5_auto_sync_final_status_failed")
+                self._tick()
+                falhas = 0
+            except Exception as exc:
+                falhas += 1
+                logger.exception("mt5_auto_sync_cycle_failed")
+                # A conexao pode ter ficado num estado ruim; derrubar aqui
+                # forca reconexao limpa no proximo ciclo.
+                try:
+                    self._disconnect()
+                except Exception:
+                    logger.exception("mt5_auto_sync_disconnect_failed")
+                self._report_failure(exc, falhas)
+                # Espera crescente ate 60s: falha continua costuma ser algo
+                # externo (banco, terminal fechado) e martelar a cada segundo
+                # so enche o log e gasta CPU.
+                self._stop.wait(min(60, 5 * falhas))
 
+        self._shutdown()
 
-def main() -> int:
-    settings = get_settings()
-    configure_logging(
-        level=settings.log_level,
-        log_dir=settings.log_dir,
-        json_format=settings.log_json,
-    )
-    worker = MT5AutoSyncWorker()
+    def _report_failure(self, exc: Exception, falhas: int) -> None:
+        """Publica a falha para o painel dizer o que houve.
 
-    def _request_stop(_signum: int, _frame: object) -> None:
-        worker.stop()
+        Se o proprio banco for o problema, publicar tambem falha — e tudo
+        bem: o painel ja mostra OFFLINE pelo heartbeat velho. O que nao pode
+        acontecer e a tentativa de avisar derrubar o worker.
+        """
+        try:
+            _, persisted = self._read_control()
+            self._publish(
+                replace(
+                    persisted,
+                    state="ERROR",
+                    worker_online=True,
+                    connected=False,
+                    last_error=(
+                        f"Falha no ciclo {falhas}x seguidas: {exc}"[:300]
+                    ),
+                )
+            )
+        except Exception:
+            logger.exception("mt5_auto_sync_failure_report_failed")
 
-    signal.signal(signal.SIGINT, _request_stop)
-    signal.signal(signal.SIGTERM, _request_stop)
-    logger.info("mt5_auto_sync_worker_started")
-    worker.run()
-    logger.info("mt5_auto_sync_worker_stopped")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    def _shutdown(self) -> None:
+        try:
+            self._disconnect()
+        except Exception:
+            logger.exception("mt5_auto_sync_disconnect_failed")
+        try:
+            _, persisted = self._read_control()
+            self._publish(
+                replace(persisted, state="OFFLINE", worker_online=False, connected=False)
+            )
+        except Exception:
+            logger.exception("mt5_auto_sync_final_status_failed")

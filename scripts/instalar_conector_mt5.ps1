@@ -52,25 +52,46 @@ $action = New-ScheduledTaskAction `
     -Execute $pythonwPath `
     -Argument "-m app.mt5.auto_sync" `
     -WorkingDirectory $projectRoot
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+
 $principal = New-ScheduledTaskPrincipal `
     -UserId "$env:USERDOMAIN\$env:USERNAME" `
     -LogonType Interactive `
     -RunLevel Limited
+
+# DOIS gatilhos, de proposito.
+#
+# O de logon sozinho tem um buraco conhecido: se o processo morrer no meio
+# do dia (banco fora do ar, terminal fechado, pane de rede), nada o traz de
+# volta ate o proximo login do Windows — e a unica saida visivel vira
+# reinstalar o conector.
+#
+# O gatilho repetitivo fecha esse buraco. Combinado com -MultipleInstances
+# IgnoreNew, ele e inofensivo quando o conector ja esta rodando (a nova
+# instancia e simplesmente descartada) e e a rede de seguranca quando nao
+# esta. Cinco minutos e o pior atraso possivel para voltar sozinho.
+$gatilhoLogon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$gatilhoRede = New-ScheduledTaskTrigger `
+    -Once `
+    -At (Get-Date) `
+    -RepetitionInterval (New-TimeSpan -Minutes 5)
+$triggers = @($gatilhoLogon, $gatilhoRede)
+
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero) `
-    -RestartCount 10 `
+    -MultipleInstances IgnoreNew `
+    -StartWhenAvailable `
+    -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1)
 
 Register-ScheduledTask `
     -TaskName $taskName `
     -Action $action `
-    -Trigger $trigger `
+    -Trigger $triggers `
     -Principal $principal `
     -Settings $settings `
-    -Description "Sincronizacao e operacoes automaticas em conta demo do AI Trader PRO." `
+    -Description "Sincronizacao e operacoes automaticas do AI Trader PRO. Reinicia sozinho a cada 5 min se cair." `
     -Force | Out-Null
 
 Write-Host "[4/4] Iniciando o conector..."
@@ -81,5 +102,14 @@ $task = Get-ScheduledTask -TaskName $taskName
 Write-Host ""
 Write-Host "Conector instalado com sucesso." -ForegroundColor Green
 Write-Host "Estado da tarefa: $($task.State)"
-Write-Host "Ele iniciara automaticamente a cada login do Windows."
+Write-Host ""
+Write-Host "Ele sobe sozinho a cada login E se conferido a cada 5 minutos:" -ForegroundColor Cyan
+Write-Host "  se cair por qualquer motivo, volta em no maximo 5 min sem voce fazer nada."
+Write-Host ""
+Write-Host "Se cair, NAO reinstale. Rode:" -ForegroundColor Yellow
+Write-Host "  scripts\reiniciar_conector_mt5.cmd"
+Write-Host ""
+Write-Host "No VPS, DESCONECTE a sessao (botao X do RDP) em vez de Fazer logoff:" -ForegroundColor Yellow
+Write-Host "  logoff encerra a sessao e derruba o MetaTrader junto."
+Write-Host ""
 Write-Host "Volte ao painel e clique em Testar conexao."

@@ -172,6 +172,31 @@ def save_sync_status(session: Session, status: MT5SyncStatus) -> None:
     )
 
 
+def heartbeat_age_label(status: MT5SyncStatus) -> str | None:
+    """Ha quanto tempo o conector nao da sinal, em texto.
+
+    "Offline" sozinho nao ajuda ninguem: parou agora ou faz tres dias? A
+    diferenca decide se voce espera ou vai atras do problema.
+    """
+    if not status.heartbeat_at:
+        return None
+    try:
+        heartbeat = datetime.fromisoformat(status.heartbeat_at)
+    except ValueError:
+        return None
+    if heartbeat.tzinfo is None:
+        heartbeat = heartbeat.replace(tzinfo=UTC)
+
+    segundos = int((datetime.now(UTC) - heartbeat).total_seconds())
+    if segundos < 60:
+        return "ha menos de um minuto"
+    if segundos < 3600:
+        return f"ha {segundos // 60} min"
+    if segundos < 86_400:
+        return f"ha {segundos // 3600} h"
+    return f"ha {segundos // 86_400} dia(s)"
+
+
 def heartbeat_is_fresh(status: MT5SyncStatus, *, max_age_seconds: int = 90) -> bool:
     if not status.worker_online or not status.heartbeat_at:
         return False

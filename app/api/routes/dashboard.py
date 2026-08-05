@@ -81,6 +81,7 @@ from app.market.scan_settings import (
 from app.ml.registry import ModelRegistry
 from app.mt5.market_data import Timeframe
 from app.mt5.sync_settings import (
+    heartbeat_age_label,
     heartbeat_is_fresh,
     load_sync_config,
     load_sync_status,
@@ -279,6 +280,11 @@ def dashboard_mt5(
     config = load_sync_config(db)
     status = load_sync_status(db)
     worker_online = heartbeat_is_fresh(status)
+    # Ja instalado alguma vez? Um batimento antigo prova que sim. Sem essa
+    # distincao a tela mandava INSTALAR toda vez que o conector caia — e
+    # reinstalar virou o remedio para tudo, refazendo o ambiente Python
+    # inteiro por causa de um processo que so precisava voltar a subir.
+    ever_installed = bool(status.heartbeat_at or status.worker_id)
     groups: dict[str, list] = {group: [] for group in GROUP_LABELS}
     for instrument in MARKET_CATALOG:
         groups[instrument.group].append(instrument)
@@ -295,6 +301,8 @@ def dashboard_mt5(
             "config": config,
             "status": status,
             "worker_online": worker_online,
+            "ever_installed": ever_installed,
+            "last_heartbeat": heartbeat_age_label(status),
             "market_groups": groups,
             "market_group_labels": GROUP_LABELS,
             "selected_codes": selected_codes,

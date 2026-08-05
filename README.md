@@ -144,6 +144,30 @@ corretora, mantém uma conexão persistente, reconecta com backoff, coleta
 somente candles fechados nos nove timeframes e atualiza ticks. A persistência
 em `symbols`, `candles` e `ticks` é incremental e idempotente.
 
+### Quando ele fica offline — não reinstale
+
+O conector é supervisionado em três camadas, e nenhuma delas exige
+reinstalação:
+
+1. **Dentro do processo.** Uma exceção no ciclo custa um ciclo, não o
+   processo. Antes, um segundo de banco indisponível derrubava o conector;
+   hoje ele registra a falha, espera (5s, 10s, 15s… até 60s) e continua.
+2. **No Windows.** A tarefa agendada tem dois gatilhos: no login e uma
+   repetição a cada 5 minutos com `MultipleInstances IgnoreNew`. Se já está
+   rodando, a repetição é descartada; se morreu, ele volta em no máximo
+   5 minutos.
+3. **Manual, sem reinstalar.** `scripts\reiniciar_conector_mt5.cmd` para e
+   sobe a tarefa. Reinstalar refaz o ambiente Python inteiro e só é
+   necessário quando o ambiente muda — dependência nova, caminho diferente.
+
+Duas causas de queda que não são bug e valem conhecer:
+
+- **O MetaTrader 5 fechou.** Sem terminal aberto e logado, o conector não
+  tem com quem falar. O painel mostra isso em `last_error`.
+- **Logoff em vez de desconectar (VPS).** Fechar o RDP com o **X** mantém a
+  sessão do Windows viva e o MT5 rodando. *Fazer logoff* encerra a sessão e
+  derruba os dois — o conector só volta quando alguém entrar de novo.
+
 O mesmo worker executa a automação configurada em **Operações
 automáticas**. O dashboard permanece no container Linux e grava o plano no
 MySQL; o worker Windows o consome após cada sincronização. Ordens só podem
