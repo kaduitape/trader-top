@@ -9,6 +9,7 @@ terminal, a funcao nao esta pronta.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from urllib.parse import unquote
 
 import pytest
 
@@ -33,6 +34,7 @@ from app.news.api_settings import (
     load_api_settings,
 )
 from app.news.call_log import CALL_LOG_SETTING, ORIGIN_PANEL, record_api_call
+from app.news.factory import AISA_API_KEY_SETTING
 
 SYMBOL = "EURUSD"
 
@@ -44,6 +46,7 @@ def _reset(db_session) -> None:
     repo.set(BUDGET_LIMIT_SETTING, "")
     repo.set(CACHE_TTL_SETTING, "")
     repo.set(CALL_LOG_SETTING, "")
+    repo.set(AISA_API_KEY_SETTING, "")
     db_session.commit()
 
 
@@ -311,3 +314,85 @@ def test_an_empty_log_says_so_instead_of_showing_an_empty_table(logged_in) -> No
     response = logged_in.get("/dashboard/settings/aisa")
 
     assert "Nenhuma chamada registrada ainda" in response.text
+
+
+# --- teste de conexao ------------------------------------------------------
+
+
+def test_testing_without_a_key_refuses_instead_of_calling(logged_in, monkeypatch) -> None:
+    """Sem chave nao existe teste — so uma chamada que falharia por motivo
+    obvio, gastando o tempo de quem clicou."""
+    chamou = []
+    monkeypatch.setattr(
+        "app.api.routes.dashboard.probe_api",
+        lambda *a, **k: chamou.append(1),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.dashboard.get_settings",
+        lambda: _sem_chave(),
+    )
+
+    response = logged_in.post("/dashboard/settings/aisa/test", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert "error=" in response.headers["location"]
+    assert chamou == []
+
+
+def _sem_chave():
+    from app.core.config import get_settings
+
+    return get_settings().model_copy(update={"aisa_api_key": None})
+
+
+def test_a_failing_probe_shows_the_raw_error(logged_in, db_session, monkeypatch) -> None:
+    """O ponto do botao: devolver o que a AIsa respondeu, nao um "deu erro"."""
+    from app.news.diagnostics import ProbeOutcome, ProbeResult
+
+    SystemSettingRepository(db_session).set(AISA_API_KEY_SETTING, "chave-de-teste")
+    db_session.commit()
+
+    monkeypatch.setattr(
+        "app.api.routes.dashboard.probe_api",
+        lambda *a, **k: ProbeResult(
+            symbol="EURUSD",
+            base_url="https://api.aisa.one",
+            outcomes=(
+                ProbeOutcome(
+                    kind="noticias",
+                    status="ERROR",
+                    message='HTTP 403 — sem permissao — Resposta: {"error":"skill not enabled"}',
+                ),
+            ),
+        ),
+    )
+
+    response = logged_in.post("/dashboard/settings/aisa/test", follow_redirects=False)
+
+    destino = response.headers["location"]
+    assert "error=" in destino
+    assert "403" in unquote(destino)
+    assert "skill%20not%20enabled" in destino or "skill not enabled" in unquote(destino)
+
+
+def test_a_successful_probe_reports_success(logged_in, db_session, monkeypatch) -> None:
+    from app.news.diagnostics import ProbeOutcome, ProbeResult
+
+    SystemSettingRepository(db_session).set(AISA_API_KEY_SETTING, "chave-de-teste")
+    db_session.commit()
+
+    monkeypatch.setattr(
+        "app.api.routes.dashboard.probe_api",
+        lambda *a, **k: ProbeResult(
+            symbol="EURUSD",
+            base_url="https://api.aisa.one",
+            outcomes=(
+                ProbeOutcome(kind="noticias", status="OK", message="12 noticia(s)"),
+                ProbeOutcome(kind="fundamentos", status="OK", message="4 registro(s)"),
+            ),
+        ),
+    )
+
+    response = logged_in.post("/dashboard/settings/aisa/test", follow_redirects=False)
+
+    assert "saved=" in response.headers["location"]

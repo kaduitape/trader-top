@@ -102,6 +102,7 @@ from app.news.call_log import (
     load_calls,
     summarize_calls,
 )
+from app.news.diagnostics import probe_api
 from app.news.factory import (
     AISA_API_BASE_URL_SETTING,
     AISA_API_KEY_SETTING,
@@ -1616,6 +1617,52 @@ def dashboard_settings_aisa(
             "saved": saved,
             "error": error,
         },
+    )
+
+
+@router.post("/dashboard/settings/aisa/test")
+def dashboard_settings_aisa_test(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    symbol: str = Form("EURUSD"),
+) -> RedirectResponse:
+    """Faz UMA consulta real de cada tipo e devolve o erro cru.
+
+    Consome cota — duas chamadas. Um teste que nao gasta nao prova que a
+    chave gasta, e descobrir que a credencial nao funciona custa menos que
+    descobrir isso no meio de um pregao.
+    """
+    settings = get_settings()
+    repo = SystemSettingRepository(db)
+    chave = repo.get(AISA_API_KEY_SETTING) or settings.aisa_api_key
+    if not chave:
+        return RedirectResponse(
+            url="/dashboard/settings/aisa?error="
+            + quote("configure a chave antes de testar."),
+            status_code=303,
+        )
+
+    resultado = probe_api(
+        db,
+        settings,
+        api_key=chave,
+        base_url=repo.get(AISA_API_BASE_URL_SETTING) or settings.aisa_api_base_url,
+        symbol=(symbol or "EURUSD").strip().upper()[:20],
+    )
+    AuditLogRepository(db).record(
+        action="aisa_probe",
+        entity="aisa_api",
+        detail=f"teste de conexao ({resultado.symbol}) por {user.username}",
+        user_id=user.id,
+    )
+    db.commit()
+
+    linhas = " | ".join(
+        f"{item.kind}: {item.status} — {item.message}" for item in resultado.outcomes
+    )
+    campo = "saved" if resultado.ok else "error"
+    return RedirectResponse(
+        url=f"/dashboard/settings/aisa?{campo}={quote(linhas[:900])}", status_code=303
     )
 
 

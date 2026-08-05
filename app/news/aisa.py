@@ -17,6 +17,55 @@ from app.news.provider import FundamentalsAssessment, NewsAssessment, NewsItem, 
 _DEFAULT_BASE_URL = "https://api.aisa.one"
 _RECORD_KEYS = ("data", "results", "items", "news", "financial_metrics", "metrics")
 
+# O que cada codigo significa para QUEM CONFIGUROU a chave. "HTTP 403" nao
+# diz a ninguem o que fazer; "chave aceita, mas sem permissao para este
+# endpoint" diz.
+_HTTP_HINTS = {
+    400: "a API recusou os parametros enviados.",
+    401: "chave nao aceita — confira se colou a chave inteira, sem espacos.",
+    403: (
+        "chave valida, mas sem permissao para este endpoint — normalmente "
+        "significa que a skill/plano correspondente nao esta habilitado na "
+        "sua conta AIsa."
+    ),
+    404: "este endpoint nao existe nesta URL base.",
+    422: "a API entendeu o pedido mas recusou os valores (ticker invalido?).",
+    429: "limite de requisicoes da AIsa atingido.",
+    500: "erro do lado da AIsa.",
+    502: "erro do lado da AIsa (gateway).",
+    503: "a AIsa esta indisponivel no momento.",
+}
+
+
+def describe_failure(exc: Exception) -> str:
+    """Transforma a excecao no que aconteceu de fato.
+
+    Existia so `type(exc).__name__` aqui — o relatorio dizia
+    "HTTPStatusError" e pronto. Isso torna impossivel distinguir chave
+    errada de endpoint errado de cota estourada, que sao tres problemas com
+    tres solucoes diferentes. O custo de guardar o codigo e um trecho da
+    resposta e baixo; o custo de nao guardar e nao conseguir consertar.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        codigo = exc.response.status_code
+        corpo = " ".join((exc.response.text or "").split())[:200]
+        dica = _HTTP_HINTS.get(codigo, "")
+        partes = [f"HTTP {codigo}"]
+        if dica:
+            partes.append(dica)
+        partes.append(f"Resposta: {corpo or '(vazia)'}")
+        return " — ".join(partes)
+    if isinstance(exc, httpx.TimeoutException):
+        return "tempo esgotado esperando a API responder."
+    if isinstance(exc, httpx.ConnectError):
+        return (
+            "nao foi possivel conectar em api.aisa.one — DNS, rede ou "
+            "proxy bloqueando a saida."
+        )
+    if isinstance(exc, httpx.HTTPError):
+        return f"falha de rede ({type(exc).__name__}): {exc}"[:220]
+    return f"resposta ilegivel ({type(exc).__name__}): {exc}"[:220]
+
 
 def _clip(value: float) -> float:
     return max(0.0, min(100.0, value))
@@ -123,7 +172,7 @@ class AisaNewsProvider:
             return NewsAssessment(
                 status=ProviderStatus.ERROR,
                 score_contribution=50.0,
-                message=f"MarketPulse indisponivel ({type(exc).__name__}); noticias neutras.",
+                message=f"Noticias MarketPulse: {describe_failure(exc)}",
             )
 
         items: list[NewsItem] = []
@@ -208,7 +257,7 @@ class AisaFundamentalsProvider:
             return FundamentalsAssessment(
                 status=ProviderStatus.ERROR,
                 score_contribution=50.0,
-                message=f"MarketPulse indisponivel ({type(exc).__name__}); fundamentos neutros.",
+                message=f"Fundamentos MarketPulse: {describe_failure(exc)}",
             )
 
         if not records:

@@ -10,8 +10,20 @@
     <a href="/dashboard/analysis" class="btn btn-outline-light"><i class="bi bi-stars me-2"></i>Voltar à análise</a>
 </header>
 
-{% if error %}<div class="alert alert-danger" role="alert"><i class="bi bi-exclamation-octagon me-2"></i>{{ error }}</div>{% endif %}
-{% if saved %}<div class="alert alert-success" role="alert"><i class="bi bi-check-circle me-2"></i>Configuração salva com auditoria.</div>{% endif %}
+{% if error %}
+<div class="alert alert-danger" role="alert">
+    <i class="bi bi-exclamation-octagon me-2"></i>
+    <span style="white-space: pre-wrap; word-break: break-word;">{{ error }}</span>
+</div>
+{% endif %}
+{% if saved %}
+<div class="alert alert-success" role="alert">
+    <i class="bi bi-check-circle me-2"></i>
+    <span style="white-space: pre-wrap; word-break: break-word;">
+        {{- "Configuração salva com auditoria." if saved == "1" else saved -}}
+    </span>
+</div>
+{% endif %}
 
 <div class="row g-4">
     <div class="col-xl-4">
@@ -151,6 +163,22 @@
                         </div>
                         {% endif %}
                     </div>
+                </form>
+
+                <hr class="my-4">
+                <h2 class="h6 fw-semibold mb-1">Testar agora</h2>
+                <p class="small text-muted mb-3">
+                    Faz <strong>uma consulta real de cada tipo</strong> e mostra a resposta
+                    crua da AIsa — código HTTP e corpo. Passa por fora do cache de propósito:
+                    testar contra o cache diria "funcionou" sem falar com ninguém.
+                    <strong>Gasta 2 chamadas da sua cota.</strong>
+                </p>
+                <form method="post" action="/dashboard/settings/aisa/test" class="d-flex flex-wrap gap-3 align-items-center">
+                    <input type="text" class="form-control" style="max-width: 12rem;"
+                           name="symbol" value="EURUSD" aria-label="Ativo para o teste">
+                    <button type="submit" class="btn btn-outline-light">
+                        <i class="bi bi-broadcast me-2"></i>Testar conexão
+                    </button>
                 </form>
             </div>
         </div>
