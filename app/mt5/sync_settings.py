@@ -61,6 +61,14 @@ class MT5SyncStatus:
     last_error: str | None = None
     handled_sync_request_id: str = ""
     handled_test_request_id: str = ""
+    code_version: str | None = None
+    """Versao do codigo que o WORKER esta rodando. Existe porque worker e
+    servidor web sao processos separados: sem isso, uma correcao aplicada no
+    repositorio e nao na maquina do worker fica invisivel, e o sintoma vira
+    "consertei e continua igual"."""
+
+    started_at: str | None = None
+    consecutive_failures: int = 0
 
 
 def utc_now_iso() -> str:
@@ -161,6 +169,13 @@ def load_sync_status(session: Session) -> MT5SyncStatus:
         last_error=str(data["last_error"])[:300] if data.get("last_error") else None,
         handled_sync_request_id=str(data.get("handled_sync_request_id", ""))[:64],
         handled_test_request_id=str(data.get("handled_test_request_id", ""))[:64],
+        code_version=(
+            str(data["code_version"])[:40] if data.get("code_version") else None
+        ),
+        started_at=data.get("started_at"),
+        consecutive_failures=_bounded_int(
+            data.get("consecutive_failures"), default=0, minimum=0, maximum=100_000
+        ),
     )
 
 

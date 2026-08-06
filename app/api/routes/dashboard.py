@@ -27,6 +27,7 @@ from app.apexflow.config import load_apexflow_config, save_apexflow_config
 from app.api.dependencies.auth import get_current_user_for_web
 from app.api.templates_engine import templates
 from app.calendar_feed.diagnostics import check_calendar
+from app.core.build_info import code_version, versions_match
 from app.core.config import get_settings
 from app.core.enums import SystemMode
 from app.core.system_mode import SystemModeError, validate_transition
@@ -293,6 +294,14 @@ def dashboard_mt5(
     # reinstalar virou o remedio para tudo, refazendo o ambiente Python
     # inteiro por causa de um processo que so precisava voltar a subir.
     ever_installed = bool(status.heartbeat_at or status.worker_id)
+    # Web e worker sao processos separados, com copias separadas do
+    # repositorio. Divergencia de versao explica o sintoma mais frustrante
+    # que existe: "consertei aquilo e continua igual".
+    versao_web = code_version()
+    versao_worker = status.code_version
+    codigo_desatualizado = bool(versao_worker) and not versions_match(
+        versao_web, versao_worker
+    )
     groups: dict[str, list] = {group: [] for group in GROUP_LABELS}
     for instrument in MARKET_CATALOG:
         groups[instrument.group].append(instrument)
@@ -311,6 +320,9 @@ def dashboard_mt5(
             "worker_online": worker_online,
             "ever_installed": ever_installed,
             "last_heartbeat": heartbeat_age_label(status),
+            "web_version": versao_web,
+            "worker_version": versao_worker,
+            "stale_code": codigo_desatualizado,
             "market_groups": groups,
             "market_group_labels": GROUP_LABELS,
             "selected_codes": selected_codes,
@@ -345,6 +357,9 @@ def dashboard_mt5_status(
             "candles_inserted": status.candles_inserted,
             "ticks_inserted": status.ticks_inserted,
             "last_error": status.last_error,
+            "code_version": status.code_version,
+            "consecutive_failures": status.consecutive_failures,
+            "started_at": status.started_at,
         }
     )
 

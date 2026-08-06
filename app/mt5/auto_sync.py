@@ -16,6 +16,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from threading import Event
 
+from app.core.build_info import code_version
 from app.core.config import get_settings
 from app.core.enums import SystemMode
 from app.database.repositories.candle_repository import CandleRepository
@@ -82,6 +83,8 @@ class MT5AutoSyncWorker:
         self._connection: MT5Connection | None = None
         self._worker_id = f"{socket.gethostname()}:{os.getpid()}"
         self._next_sync_at = datetime.min.replace(tzinfo=UTC)
+        self._started_at = utc_now_iso()
+        self._failures = 0
 
     def stop(self) -> None:
         self._stop.set()
@@ -98,6 +101,12 @@ class MT5AutoSyncWorker:
             status,
             heartbeat_at=utc_now_iso(),
             worker_id=self._worker_id,
+            # Carimbados em TODA publicacao, e nao so na inicial: e o unico
+            # jeito de o painel saber que versao esta de fato rodando aqui,
+            # inclusive quando o worker foi reiniciado por fora.
+            code_version=code_version(),
+            started_at=self._started_at,
+            consecutive_failures=self._failures,
         )
         session = get_session_factory()()
         try:
@@ -691,13 +700,12 @@ class MT5AutoSyncWorker:
         except Exception:
             logger.exception("mt5_auto_sync_initial_status_failed")
 
-        falhas = 0
         while not self._stop.is_set():
             try:
                 self._tick()
-                falhas = 0
+                self._failures = 0
             except Exception as exc:
-                falhas += 1
+                self._failures += 1
                 logger.exception("mt5_auto_sync_cycle_failed")
                 # A conexao pode ter ficado num estado ruim; derrubar aqui
                 # forca reconexao limpa no proximo ciclo.
@@ -705,11 +713,11 @@ class MT5AutoSyncWorker:
                     self._disconnect()
                 except Exception:
                     logger.exception("mt5_auto_sync_disconnect_failed")
-                self._report_failure(exc, falhas)
+                self._report_failure(exc, self._failures)
                 # Espera crescente ate 60s: falha continua costuma ser algo
                 # externo (banco, terminal fechado) e martelar a cada segundo
                 # so enche o log e gasta CPU.
-                self._stop.wait(min(60, 5 * falhas))
+                self._stop.wait(min(60, 5 * self._failures))
 
         self._shutdown()
 

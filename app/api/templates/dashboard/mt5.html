@@ -127,6 +127,37 @@
     </div>
 </div>
 
+{% if stale_code %}
+<section class="alert alert-warning d-flex gap-3 align-items-start" role="alert">
+    <i class="bi bi-box-arrow-down fs-4"></i>
+    <div>
+        <strong>O conector está rodando código antigo.</strong>
+        Painel na versão <code>{{ web_version }}</code>, conector na
+        <code>{{ worker_version }}</code>. São processos separados, com cópias
+        separadas do projeto — correção aplicada aqui não chega lá sozinha.
+        <div class="mt-2">
+            Na máquina Windows, na pasta do projeto:
+            <code>git pull</code> e depois
+            <code>scripts\reiniciar_conector_mt5.cmd</code>.
+            Enquanto as versões não baterem, qualquer correção recente
+            <strong>não está valendo</strong> no conector.
+        </div>
+    </div>
+</section>
+{% endif %}
+
+{% if status.consecutive_failures and status.consecutive_failures > 2 %}
+<section class="alert alert-danger d-flex gap-3 align-items-start" role="alert">
+    <i class="bi bi-arrow-repeat fs-4"></i>
+    <div>
+        <strong>{{ status.consecutive_failures }} falhas seguidas no ciclo.</strong>
+        O conector continua de pé e tentando (a espera cresce até 60 s), mas
+        alguma coisa está falhando de forma consistente.
+        {% if status.last_error %}<div class="mt-2"><code>{{ status.last_error }}</code></div>{% endif %}
+    </div>
+</section>
+{% endif %}
+
 {% if not worker_online and not ever_installed %}
 <section class="tp-connector-setup mb-4">
     <div class="tp-setup-number">1</div>
