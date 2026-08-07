@@ -172,6 +172,72 @@
                 {% if calendar_file %}
                 <p class="small text-muted"><code class="text-break">{{ calendar_file }}</code></p>
                 {% endif %}
+                <hr class="my-4">
+                <h3 class="h6 fw-semibold mb-1">Operar durante notícia?</h3>
+                <p class="small text-muted mb-3">
+                    Payroll, decisão de juros, CPI. Era ajuste de arquivo; é decisão de
+                    estratégia — tem quem fuja de evento e quem só opere neles.
+                </p>
+                <form method="post" action="/dashboard/settings/calendar/policy">
+                    <div class="tp-pilot-picker mb-3" role="radiogroup" aria-label="Política de eventos">
+                        <div class="tp-pilot-options">
+                            <label class="tp-pilot-option">
+                                <input type="radio" name="avoid_events" value="1"
+                                       {% if calendar_policy.avoid_events %}checked{% endif %}>
+                                <span>
+                                    <i class="bi bi-shield-check"></i>
+                                    <strong>Não operar</strong>
+                                    <small>Recomendado</small>
+                                </span>
+                            </label>
+                            <label class="tp-pilot-option">
+                                <input type="radio" name="avoid_events" value="0"
+                                       {% if not calendar_policy.avoid_events %}checked{% endif %}>
+                                <span>
+                                    <i class="bi bi-lightning-charge"></i>
+                                    <strong>Operar normalmente</strong>
+                                    <small>Ignora o calendário</small>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-4">
+                            <label for="minutes_before" class="form-label small fw-semibold">Antes (min)</label>
+                            <input type="number" class="form-control" id="minutes_before"
+                                   name="minutes_before" min="0" max="240" step="5"
+                                   value="{{ calendar_policy.minutes_before }}">
+                        </div>
+                        <div class="col-4">
+                            <label for="minutes_after" class="form-label small fw-semibold">Depois (min)</label>
+                            <input type="number" class="form-control" id="minutes_after"
+                                   name="minutes_after" min="0" max="240" step="5"
+                                   value="{{ calendar_policy.minutes_after }}">
+                        </div>
+                        <div class="col-4">
+                            <label for="min_impact" class="form-label small fw-semibold">Impacto</label>
+                            <select class="form-select" id="min_impact" name="min_impact">
+                                {% for item in impacts %}
+                                <option value="{{ item }}" {% if calendar_policy.min_impact == item %}selected{% endif %}>{{ item }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    {% if not calendar_policy.avoid_events %}
+                    <div class="tp-context-note mb-3">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <div>
+                            Operando em notícia: o spread abre, o slippage cresce e o stop
+                            pode ser executado <strong>longe do preço pedido</strong>. O risco
+                            real da operação deixa de ser o risco calculado.
+                        </div>
+                    </div>
+                    {% endif %}
+                    <button type="submit" class="btn btn-outline-light w-100 mb-3">
+                        <i class="bi bi-save me-2"></i>Salvar política
+                    </button>
+                </form>
+
                 <form method="post" action="/dashboard/settings/calendar/check">
                     <input type="hidden" name="symbol" value="{{ trading.symbol }}">
                     <button type="submit" class="btn btn-primary w-100">

@@ -149,7 +149,22 @@ def mercado(db_session):
     _limpa_candles(db_session)
 
 
-def _analyze(db_session, *, news: ProviderStatus, fundamentals: ProviderStatus, threshold=60.0):
+class _CalendarioFixo:
+    def __init__(self, snapshot) -> None:
+        self._snapshot = snapshot
+
+    def fetch_events(self, *, now, horizon_minutes):
+        return self._snapshot
+
+
+def _analyze(
+    db_session,
+    *,
+    news: ProviderStatus,
+    fundamentals: ProviderStatus,
+    threshold=60.0,
+    calendario=None,
+):
     return analyze_symbol(
         db_session,
         symbol=SYMBOL,
@@ -158,6 +173,7 @@ def _analyze(db_session, *, news: ProviderStatus, fundamentals: ProviderStatus, 
         now=NOW,
         news_provider=_Provider(news, "noticias"),
         fundamentals_provider=_Provider(fundamentals, "fundamentos"),
+        calendar_provider=calendario,
     )
 
 
@@ -257,3 +273,76 @@ def test_the_default_threshold_of_90_is_out_of_reach_in_practice(mercado) -> Non
         "Se o cenario mais favoravel passar de 90, revise este teste — mas "
         "ate la, limiar 90 significa nunca operar."
     )
+
+
+# --- politica de eventos (payroll) ----------------------------------------
+
+
+def test_a_scheduled_event_blocks_when_the_policy_says_to_avoid(mercado) -> None:
+    """Com "nao operar em noticia" ligado, o evento veta a entrada."""
+    from app.calendar_feed.policy import save_calendar_policy
+    from app.calendar_feed.provider import CalendarEvent, CalendarSnapshot, CalendarStatus
+
+    save_calendar_policy(
+        mercado, avoid_events=True, minutes_before=30, minutes_after=15,
+        min_impact="HIGH",
+    )
+    mercado.commit()
+
+    calendario = _CalendarioFixo(
+        CalendarSnapshot(
+            status=CalendarStatus.OK,
+            events=[
+                CalendarEvent(
+                    title="Non-Farm Payrolls",
+                    scheduled_at=NOW + timedelta(minutes=10),
+                    currency="USD",
+                    impact="HIGH",
+                )
+            ],
+        )
+    )
+
+    relatorio = _analyze(
+        mercado, news=ProviderStatus.SKIPPED, fundamentals=ProviderStatus.SKIPPED,
+        calendario=calendario,
+    )
+
+    assert relatorio.score.recommendation == "DO_NOT_ENTER"
+    assert any(
+        "Payrolls" in motivo for motivo in relatorio.score.reasons_below_threshold
+    )
+
+
+def test_the_same_event_does_not_block_when_the_operator_opted_in(mercado) -> None:
+    """Escolha explicita do operador: opera em noticia. O sistema obedece —
+    e a tela avisa o que isso custa."""
+    from app.calendar_feed.policy import save_calendar_policy
+    from app.calendar_feed.provider import CalendarEvent, CalendarSnapshot, CalendarStatus
+
+    save_calendar_policy(
+        mercado, avoid_events=False, minutes_before=30, minutes_after=15,
+        min_impact="HIGH",
+    )
+    mercado.commit()
+
+    calendario = _CalendarioFixo(
+        CalendarSnapshot(
+            status=CalendarStatus.OK,
+            events=[
+                CalendarEvent(
+                    title="Non-Farm Payrolls",
+                    scheduled_at=NOW + timedelta(minutes=10),
+                    currency="USD",
+                    impact="HIGH",
+                )
+            ],
+        )
+    )
+
+    relatorio = _analyze(
+        mercado, news=ProviderStatus.SKIPPED, fundamentals=ProviderStatus.SKIPPED,
+        calendario=calendario,
+    )
+
+    assert relatorio.score.recommendation == "ENTER"

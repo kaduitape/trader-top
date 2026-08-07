@@ -16,13 +16,38 @@
 </header>
 
 {% if error %}
-<div class="alert alert-danger"><i class="bi bi-exclamation-octagon me-2"></i>{{ error }}</div>
+<div class="alert alert-danger">
+    <i class="bi bi-exclamation-octagon me-2"></i>
+    <span style="white-space: pre-line; word-break: break-word;">{{ error }}</span>
+</div>
 {% endif %}
 {% if saved %}
-<div class="alert alert-success"><i class="bi bi-check-circle me-2"></i>Configuração aplicada.</div>
+<div class="alert alert-success">
+    <i class="bi bi-check-circle me-2"></i>
+    <span style="white-space: pre-line; word-break: break-word;">
+        {{- "Configuração aplicada." if saved == "1" else saved -}}
+    </span>
+</div>
 {% endif %}
 
 {% include "dashboard/_robot_status.html" %}
+
+<section class="card mb-4">
+    <div class="card-body p-4 d-flex flex-wrap gap-3 align-items-center justify-content-between">
+        <div>
+            <strong>Ele vai entrar agora?</strong>
+            <div class="small text-muted">
+                Roda a mesma análise do robô neste instante e responde: entraria ou não —
+                e, se não, por quê. Não envia ordem nem muda configuração.
+            </div>
+        </div>
+        <form method="post" action="/dashboard/trading/preview">
+            <button type="submit" class="btn btn-outline-light text-nowrap">
+                <i class="bi bi-question-circle me-2"></i>Verificar decisão
+            </button>
+        </form>
+    </div>
+</section>
 
 <div class="row g-4">
     <div class="col-xl-7">

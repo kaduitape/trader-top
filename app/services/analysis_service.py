@@ -25,6 +25,7 @@ from app.calendar_feed.blackout import (
     find_blocking_event,
 )
 from app.calendar_feed.factory import get_calendar_provider
+from app.calendar_feed.policy import CalendarPolicy, load_calendar_policy
 from app.calendar_feed.provider import CalendarProvider
 from app.core.config import get_settings
 from app.market.multi_timeframe import (
@@ -116,6 +117,7 @@ def _calendar_blockers(
     symbol: str,
     now: datetime,
     settings,
+    policy: CalendarPolicy,
     provider: CalendarProvider | None = None,
 ) -> list[str]:
     """Bloqueio por evento economico agendado.
@@ -130,12 +132,16 @@ def _calendar_blockers(
     que o projeto acabou de resolver. A ausencia nao some: vira o aviso que
     aparece no status e no relatorio do dia.
     """
+    if not policy.avoid_events:
+        # Escolha explicita do operador, registrada no painel. Nao e neutra:
+        # em evento de alto impacto o spread abre e o stop pode ser executado
+        # longe do preco pedido — o risco real deixa de ser o calculado.
+        return []
+
     resolvido = provider or get_calendar_provider(settings)
-    horizonte = max(
-        settings.calendar_blackout_before_minutes,
-        settings.calendar_blackout_after_minutes,
+    snapshot = resolvido.fetch_events(
+        now=now, horizon_minutes=policy.horizon_minutes * 2
     )
-    snapshot = resolvido.fetch_events(now=now, horizon_minutes=horizonte * 2)
 
     if not snapshot.usable:
         if settings.calendar_block_when_unavailable:
@@ -147,10 +153,10 @@ def _calendar_blockers(
         symbol=symbol,
         now=now,
         window=BlackoutWindow(
-            minutes_before=settings.calendar_blackout_before_minutes,
-            minutes_after=settings.calendar_blackout_after_minutes,
+            minutes_before=policy.minutes_before,
+            minutes_after=policy.minutes_after,
         ),
-        min_impact=settings.calendar_min_impact,
+        min_impact=policy.min_impact,
     )
     return [describe(evento, now=now)] if evento is not None else []
 
@@ -326,6 +332,7 @@ def analyze_symbol(
                 symbol=symbol,
                 now=resolved_now,
                 settings=settings,
+                policy=load_calendar_policy(session, settings),
                 provider=calendar_provider,
             )
         )

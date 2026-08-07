@@ -27,6 +27,12 @@ from app.apexflow.config import load_apexflow_config, save_apexflow_config
 from app.api.dependencies.auth import get_current_user_for_web
 from app.api.templates_engine import templates
 from app.calendar_feed.diagnostics import check_calendar
+from app.calendar_feed.policy import (
+    IMPACTS,
+    load_calendar_policy,
+    save_calendar_policy,
+    validate_calendar_policy,
+)
 from app.core.build_info import code_version, versions_match
 from app.core.config import get_settings
 from app.core.enums import SystemMode
@@ -65,7 +71,7 @@ from app.execution.autopilot_status import (
     summarize_activities,
 )
 from app.execution.blocker_stats import load_blocker_stats
-from app.execution.symbol_selection import SOURCE_RADAR, SYMBOL_SOURCES
+from app.execution.symbol_selection import SOURCE_RADAR, SYMBOL_SOURCES, choose_symbol
 from app.market.catalog import (
     GROUP_LABELS,
     MARKET_CATALOG,
@@ -1352,6 +1358,74 @@ def dashboard_trading_quick(
     )
 
 
+@router.post("/dashboard/trading/preview")
+def dashboard_trading_preview(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Roda a MESMA analise do robo e diz se ele entraria agora.
+
+    Existe porque "esta ligado" nao responde a pergunta que importa: ele vai
+    abrir ordem ou nao? Sem isso o operador so descobre esperando — e nao
+    saber se um robo ligado esta prestes a operar ou parado por um veto e
+    exatamente o tipo de duvida que faz desligar tudo.
+
+    A analise e consultiva: nao envia ordem, nao altera configuracao.
+    """
+    del user
+    config = load_trading_automation_config(db)
+    agora = datetime.now(UTC)
+
+    escolha = choose_symbol(
+        db,
+        configured_symbol=config.symbol,
+        source=config.symbol_source,
+        available_symbols=[
+            item.instrument.code
+            for item in catalog_availability(SymbolRepository(db).list_active())
+            if item.is_available
+        ],
+        strategy_name="autopilot",
+        now=agora,
+    )
+
+    try:
+        relatorio = analyze_symbol(
+            db,
+            symbol=escolha.symbol,
+            primary_timeframe=Timeframe(config.timeframe),
+            threshold=config.analysis_threshold,
+            now=agora,
+        )
+    except (SymbolNotFoundError, NotImplementedError, ValueError) as exc:
+        return RedirectResponse(
+            url="/dashboard/trading?error="
+            + quote(f"Nao foi possivel analisar {escolha.symbol}: {exc}"),
+            status_code=303,
+        )
+
+    partes = [f"{escolha.symbol} — {escolha.reason}"]
+    if relatorio.score.recommendation == "ENTER":
+        partes.append(
+            f"ENTRARIA AGORA: score {relatorio.score.total_score:.1f} "
+            f"(minimo {config.analysis_threshold:.0f})."
+        )
+        campo = "saved"
+    else:
+        partes.append(
+            f"NAO entraria: score {relatorio.score.total_score:.1f} "
+            f"(minimo {config.analysis_threshold:.0f})."
+        )
+        for motivo in relatorio.score.reasons_below_threshold[:6]:
+            partes.append(f"• {motivo}")
+        campo = "error"
+
+    return RedirectResponse(
+        url=f"/dashboard/trading?{campo}=" + quote("\n".join(partes)[:1400]),
+        status_code=303,
+    )
+
+
 @router.get("/dashboard/autopilot", response_class=HTMLResponse)
 def dashboard_autopilot_redirect() -> RedirectResponse:
     """Tela antiga do piloto — a configuracao agora vive em um lugar so."""
@@ -1603,9 +1677,62 @@ def dashboard_settings_hub(
             "current_mode": get_current_mode(db).value,
             "broker": settings.broker,
             "calendar_file": settings.calendar_file_path or "",
+            "calendar_policy": load_calendar_policy(db, settings),
+            "impacts": IMPACTS,
             "saved": saved,
             "error": error,
         },
+    )
+
+
+@router.post("/dashboard/settings/calendar/policy")
+def dashboard_calendar_policy_save(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    avoid_events: str = Form(""),
+    minutes_before: int = Form(30),
+    minutes_after: int = Form(15),
+    min_impact: str = Form("HIGH"),
+) -> RedirectResponse:
+    """Operar ou nao durante evento economico. Decisao de estrategia, do
+    operador — nao de infraestrutura, e por isso saiu do `.env`."""
+    problema = validate_calendar_policy(
+        minutes_before=minutes_before,
+        minutes_after=minutes_after,
+        min_impact=min_impact,
+    )
+    if problema:
+        db.rollback()
+        return RedirectResponse(
+            url=f"/dashboard/settings?error={quote(problema)}", status_code=303
+        )
+
+    evitar = avoid_events != "0"
+    mudancas = save_calendar_policy(
+        db,
+        avoid_events=evitar,
+        minutes_before=minutes_before,
+        minutes_after=minutes_after,
+        min_impact=min_impact,
+    )
+    AuditLogRepository(db).record(
+        action="calendar_policy_change",
+        entity="calendar",
+        detail=f"{', '.join(mudancas)} por {user.username}",
+        user_id=user.id,
+    )
+    db.commit()
+
+    aviso = (
+        ""
+        if evitar
+        else " ATENCAO: em evento de alto impacto o spread abre e o stop pode "
+        "ser executado longe do preco pedido."
+    )
+    return RedirectResponse(
+        url="/dashboard/settings?saved="
+        + quote(f"Politica de eventos: {', '.join(mudancas)}.{aviso}"),
+        status_code=303,
     )
 
 
