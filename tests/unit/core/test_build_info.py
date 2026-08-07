@@ -16,6 +16,7 @@ produziam falso alarme: dependencia do ambiente e fim de linha.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ from app.core.build_info import UNKNOWN, code_version, versions_match
 
 
 @pytest.fixture(autouse=True)
-def _sem_cache():
+def _sem_cache() -> Generator[None, None, None]:
     code_version.cache_clear()
     yield
     code_version.cache_clear()
@@ -58,19 +59,19 @@ def test_the_answer_is_stable_within_the_process() -> None:
     assert code_version() == code_version()
 
 
-def test_it_does_not_depend_on_git_being_present() -> None:
+def test_it_does_not_depend_on_git_being_present(tmp_path: Path) -> None:
     """A arvore sintetica nao tem `.git` nenhum — e ainda assim responde.
 
     Era exatamente isto que faltava: o painel roda em container sem
     repositorio, e nao pode por isso reportar uma versao incomparavel.
     """
-    digital = _digital_de(Path(__file__).parent / "_tmp_git", {"m.py": b"x = 1\n"})
+    digital = _digital_de(tmp_path, {"m.py": b"x = 1\n"})
 
     assert digital != UNKNOWN
     assert len(digital) == 16
 
 
-def test_line_endings_do_not_change_the_fingerprint(tmp_path) -> None:
+def test_line_endings_do_not_change_the_fingerprint(tmp_path: Path) -> None:
     """O git no Windows converte LF para CRLF na checagem. Sem normalizar, o
     MESMO commit daria digitais diferentes nos dois sistemas — recriando o
     falso alarme que este modulo existe para eliminar."""
@@ -80,14 +81,14 @@ def test_line_endings_do_not_change_the_fingerprint(tmp_path) -> None:
     assert unix == windows
 
 
-def test_different_code_gives_a_different_fingerprint(tmp_path) -> None:
+def test_different_code_gives_a_different_fingerprint(tmp_path: Path) -> None:
     antes = _digital_de(tmp_path / "a", {"m.py": b"x = 1\n"})
     depois = _digital_de(tmp_path / "b", {"m.py": b"x = 2\n"})
 
     assert antes != depois
 
 
-def test_the_file_name_is_part_of_the_fingerprint(tmp_path) -> None:
+def test_the_file_name_is_part_of_the_fingerprint(tmp_path: Path) -> None:
     """Mover codigo de arquivo e uma mudanca de versao."""
     a = _digital_de(tmp_path / "a", {"um.py": b"x = 1\n"})
     b = _digital_de(tmp_path / "b", {"dois.py": b"x = 1\n"})
@@ -95,14 +96,14 @@ def test_the_file_name_is_part_of_the_fingerprint(tmp_path) -> None:
     assert a != b
 
 
-def test_a_new_file_changes_the_fingerprint(tmp_path) -> None:
+def test_a_new_file_changes_the_fingerprint(tmp_path: Path) -> None:
     antes = _digital_de(tmp_path / "a", {"m.py": b"x = 1\n"})
     depois = _digital_de(tmp_path / "b", {"m.py": b"x = 1\n", "n.py": b"y = 2\n"})
 
     assert antes != depois
 
 
-def test_pycache_is_ignored(tmp_path) -> None:
+def test_pycache_is_ignored(tmp_path: Path) -> None:
     """`.pyc` e artefato local: presenca dele nao pode virar "versao
     diferente"."""
     limpo = _digital_de(tmp_path / "a", {"m.py": b"x = 1\n"})
@@ -113,7 +114,7 @@ def test_pycache_is_ignored(tmp_path) -> None:
     assert limpo == sujo
 
 
-def test_a_tree_without_sources_is_unknown(tmp_path) -> None:
+def test_a_tree_without_sources_is_unknown(tmp_path: Path) -> None:
     raiz = tmp_path / "vazio"
     raiz.mkdir()
     original_raiz, original_fonte = build_info._ROOT, build_info._SOURCE_DIR

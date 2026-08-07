@@ -34,6 +34,7 @@ Calculado uma vez por processo.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
 
@@ -43,7 +44,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 _SOURCE_DIR = _ROOT / "app"
 
 
-def _iter_sources(base: Path):
+def _iter_sources(base: Path) -> Iterator[Path]:
     for caminho in sorted(base.rglob("*.py")):
         if "__pycache__" in caminho.parts:
             continue
