@@ -1,62 +1,78 @@
 """Que versao do codigo este processo esta rodando.
 
 O conector Windows e o servidor web sao processos separados, em maquinas
-que podem ser separadas, cada um com a sua copia do repositorio. Nada
-garante que estejam na mesma versao — e quando nao estao, o sintoma e
-sempre o mesmo: "consertei aquilo e continua igual".
+separadas, cada um com a sua copia do projeto. Nada garante que estejam na
+mesma versao — e quando nao estao, o sintoma e o mais frustrante que
+existe: "consertei aquilo e continua igual".
 
-Foi exatamente o que aconteceu com as quedas do conector. As correcoes de
-supervisao existiam no repositorio e nao na maquina que roda o worker, e
-nao havia como perceber isso olhando o painel.
+## Por que a impressao digital, e nao o sha do git
 
-A leitura e feita UMA vez por processo. `git` pode nao existir na maquina
-do worker (instalacao por copia de pasta), entao a ausencia dele nao e
-erro: cai para a versao do pacote, e no pior caso para "desconhecida".
+A primeira versao disto usava `git rev-parse HEAD`, e estava errada de um
+jeito que so aparece em producao: `.git/` esta no `.dockerignore`, entao o
+painel (que roda em container) NUNCA tem repositorio e caia para a versao
+do pacote — "0.1.0" —, enquanto o conector no Windows devolvia um sha. Os
+dois nunca batiam, e o alarme ficava ligado para sempre, dizendo justamente
+o contrario da verdade.
+
+A licao: o identificador tem que vir do CODIGO, nao do ambiente ao redor
+dele. Aqui ele e uma impressao digital do conteudo dos proprios arquivos
+`.py` de `app/`. Codigo igual produz identificador igual em qualquer lugar
+— container Linux sem git, Windows com git, pasta copiada por pendrive.
+
+Duas normalizacoes que parecem detalhe e nao sao:
+
+- **Fim de linha.** O git no Windows costuma converter LF para CRLF na
+  checagem. Sem normalizar, o MESMO commit produziria digitais diferentes
+  nos dois sistemas — recriando exatamente o falso alarme que este modulo
+  existe para eliminar.
+- **Separador de caminho.** `app/core/x.py` e `app\\core\\x.py` sao o mesmo
+  arquivo; o caminho entra na conta com barra normal sempre.
+
+Calculado uma vez por processo.
 """
 
 from __future__ import annotations
 
-import subprocess
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 
 UNKNOWN = "desconhecida"
 
-
-def _git_short_sha() -> str | None:
-    raiz = Path(__file__).resolve().parents[2]
-    if not (raiz / ".git").exists():
-        return None
-    try:
-        saida = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=raiz,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    sha = saida.stdout.strip()
-    return sha or None
+_ROOT = Path(__file__).resolve().parents[2]
+_SOURCE_DIR = _ROOT / "app"
 
 
-def _package_version() -> str | None:
-    try:
-        from importlib.metadata import PackageNotFoundError, version
-    except ImportError:  # pragma: no cover - Python muito antigo
-        return None
-    try:
-        return version("mt5-ai-scalper")
-    except PackageNotFoundError:
-        return None
+def _iter_sources(base: Path):
+    for caminho in sorted(base.rglob("*.py")):
+        if "__pycache__" in caminho.parts:
+            continue
+        yield caminho
 
 
 @lru_cache(maxsize=1)
 def code_version() -> str:
-    """Identificador curto e estavel do codigo em execucao."""
-    return _git_short_sha() or _package_version() or UNKNOWN
+    """Impressao digital curta do codigo em execucao."""
+    if not _SOURCE_DIR.is_dir():
+        return UNKNOWN
+
+    digest = hashlib.blake2b(digest_size=8)
+    encontrou = False
+    for caminho in _iter_sources(_SOURCE_DIR):
+        try:
+            conteudo = caminho.read_bytes()
+        except OSError:
+            # Arquivo ilegivel nao pode derrubar o diagnostico; ele so nao
+            # entra na conta. A digital continua util para comparar.
+            continue
+        encontrou = True
+        relativo = caminho.relative_to(_ROOT).as_posix()
+        digest.update(relativo.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(conteudo.replace(b"\r\n", b"\n"))
+        digest.update(b"\0")
+
+    return digest.hexdigest() if encontrou else UNKNOWN
 
 
 def versions_match(a: str | None, b: str | None) -> bool:

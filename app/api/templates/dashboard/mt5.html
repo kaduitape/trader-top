@@ -131,17 +131,27 @@
 <section class="alert alert-warning d-flex gap-3 align-items-start" role="alert">
     <i class="bi bi-box-arrow-down fs-4"></i>
     <div>
-        <strong>O conector está rodando código antigo.</strong>
-        Painel na versão <code>{{ web_version }}</code>, conector na
-        <code>{{ worker_version }}</code>. São processos separados, com cópias
-        separadas do projeto — correção aplicada aqui não chega lá sozinha.
+        <strong>Painel e conector estão com códigos diferentes.</strong>
+        Painel <code>{{ web_version }}</code>, conector <code>{{ worker_version }}</code>.
+        São processos separados, com cópias separadas do projeto — atualizar um
+        não atualiza o outro.
         <div class="mt-2">
-            Na máquina Windows, na pasta do projeto:
-            <code>git pull</code> e depois
-            <code>scripts\reiniciar_conector_mt5.cmd</code>.
-            Enquanto as versões não baterem, qualquer correção recente
-            <strong>não está valendo</strong> no conector.
+            A versão é uma <strong>impressão digital do próprio código</strong>, então
+            qualquer diferença acima é diferença real de arquivo. Atualize os
+            <strong>dois lados</strong>:
         </div>
+        <ul class="mt-2 mb-0 small">
+            <li>
+                <strong>Conector (Windows):</strong> <code>git pull</code> e
+                <code>scripts\reiniciar_conector_mt5.cmd</code>
+            </li>
+            <li>
+                <strong>Painel:</strong> <code>git pull</code> e
+                <code>docker compose up -d --build</code> — sem o
+                <code>--build</code> o container continua com o código da imagem antiga,
+                por mais que o <code>git pull</code> tenha funcionado
+            </li>
+        </ul>
     </div>
 </section>
 {% endif %}
