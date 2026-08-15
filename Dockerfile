@@ -34,6 +34,7 @@ COPY alembic ./alembic
 COPY docker/entrypoint.sh /entrypoint.sh
 
 RUN pip install --no-cache-dir --no-deps . \
+    && sed -i 's/\r$//' /entrypoint.sh \
     && chmod +x /entrypoint.sh
 
 RUN mkdir -p logs models datasets

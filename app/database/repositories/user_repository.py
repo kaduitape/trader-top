@@ -17,6 +17,10 @@ class UserRepository:
         stmt = select(User).where(User.username == username)
         return self._session.execute(stmt).scalar_one_or_none()
 
+    def get_by_email(self, email: str) -> User | None:
+        stmt = select(User).where(User.email == email)
+        return self._session.execute(stmt).scalar_one_or_none()
+
     def get_by_id(self, user_id: int) -> User | None:
         return self._session.get(User, user_id)
 

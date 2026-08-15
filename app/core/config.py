@@ -48,6 +48,23 @@ class Settings(BaseSettings):
     # continua exigido normalmente).
     dashboard_auth_disabled: bool = False
 
+    # --- Login com Google (OpenID Connect) ---------------------------------
+    # O recurso permanece oculto/inativo enquanto as tres variaveis nao
+    # estiverem preenchidas. O callback deve ser cadastrado exatamente como
+    # informado no Google Cloud Console.
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    google_oauth_redirect_uri: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def google_oauth_enabled(self) -> bool:
+        return bool(
+            self.google_oauth_client_id
+            and self.google_oauth_client_secret
+            and self.google_oauth_redirect_uri
+        )
+
     # --- Banco de dados ------------------------------------------------------
     db_driver: str = "mysql+pymysql"
     db_host: str = "localhost"

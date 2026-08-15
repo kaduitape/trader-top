@@ -9,6 +9,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.core.google_oauth import GoogleIdentity
 from app.core.security import hash_password
 from app.database.repositories.audit_log_repository import AuditLogRepository
 from app.database.repositories.live_trade_repository import LiveTradeRepository
@@ -93,6 +94,78 @@ def test_login_success_sets_cookie_and_redirects_to_dashboard(client, db_session
     assert response.status_code == 303
     assert response.headers["location"] == "/dashboard"
     assert client.cookies.get("access_token") is not None
+
+
+def test_google_login_redirects_and_sets_flow_cookies(client, monkeypatch) -> None:
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
+    monkeypatch.setattr(
+        settings, "google_oauth_redirect_uri", "http://localhost/auth/google/callback"
+    )
+
+    response = client.get("/auth/google", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("https://accounts.google.com/")
+    assert client.cookies.get("google_oauth_state")
+    assert client.cookies.get("google_oauth_nonce")
+
+
+def test_google_callback_logs_in_existing_user(client, db_session, monkeypatch) -> None:
+    from app.api.routes import web_auth
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
+    monkeypatch.setattr(
+        settings, "google_oauth_redirect_uri", "http://localhost/auth/google/callback"
+    )
+    _create_user(db_session, "google_user", "unused-password")
+    user = UserRepository(db_session).get_by_username("google_user")
+    assert user is not None
+    user.email = "person@gmail.com"
+    db_session.commit()
+    monkeypatch.setattr(
+        web_auth,
+        "exchange_code_for_identity",
+        lambda **_kwargs: GoogleIdentity(subject="google-sub", email="person@gmail.com"),
+    )
+    client.cookies.set("google_oauth_state", "expected-state")
+    client.cookies.set("google_oauth_nonce", "expected-nonce")
+
+    response = client.get(
+        "/auth/google/callback?code=one-time-code&state=expected-state",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/dashboard"
+    assert client.cookies.get("access_token")
+
+
+def test_google_callback_rejects_state_mismatch(client, monkeypatch) -> None:
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "google_oauth_client_id", "client-id")
+    monkeypatch.setattr(settings, "google_oauth_client_secret", "client-secret")
+    monkeypatch.setattr(
+        settings, "google_oauth_redirect_uri", "http://localhost/auth/google/callback"
+    )
+    client.cookies.set("google_oauth_state", "expected-state")
+    client.cookies.set("google_oauth_nonce", "expected-nonce")
+
+    response = client.get(
+        "/auth/google/callback?code=one-time-code&state=wrong-state",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+    assert client.cookies.get("access_token") is None
 
 
 def test_authenticated_dashboard_home_renders(client, db_session) -> None:
