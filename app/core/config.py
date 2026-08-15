@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     # Fallback via .env; a chave tambem pode ser configurada em runtime via
     # /dashboard/settings/aisa (persistida em system_settings, tem prioridade
     # sobre este valor -- ver app/news/factory.py).
+    credentials_encryption_key: str | None = None
+    """Chave dedicada para cifrar credenciais guardadas no banco (ver
+    `app/core/crypto.py`). Ausente, o segredo da aplicacao e usado — trocar
+    qualquer um dos dois invalida o que ja estava cifrado."""
+
     aisa_api_key: str | None = None
     aisa_api_base_url: str | None = None
 

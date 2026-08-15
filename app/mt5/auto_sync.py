@@ -635,6 +635,9 @@ class MT5AutoSyncWorker:
 
         status = self._terminal_status(status, connection, state="ONLINE")
         if test_pending:
+            # O painel nao consegue falar com o terminal (Linux, sem a
+            # biblioteca). Quem executa o teste de credencial e este worker.
+            self._run_credential_test()
             status = replace(
                 status,
                 handled_test_request_id=config.test_request_id,
@@ -687,6 +690,54 @@ class MT5AutoSyncWorker:
             status = self._publish(replace(status, state="ONLINE", connected=True))
 
         self._stop.wait(min(5, config.interval_seconds))
+
+    def _run_credential_test(self) -> None:
+        """Testa a credencial cadastrada e publica o resultado no banco.
+
+        Nunca derruba o ciclo: um teste que explode e um teste que falhou,
+        nao um conector que morre. E a senha so existe em memoria, entre a
+        leitura e a chamada ao terminal.
+        """
+        from app.core.crypto import CredentialCryptoError
+        from app.database.repositories.mt5_credential_repository import (
+            Mt5CredentialRepository,
+        )
+        from app.mt5.connection_service import MT5ConnectionService
+
+        session = get_session_factory()()
+        try:
+            repo = Mt5CredentialRepository(session)
+            credencial = repo.get_active()
+            if credencial is None:
+                return
+
+            try:
+                senha = repo.reveal_password(credencial)
+            except CredentialCryptoError as exc:
+                repo.record_test(credencial, success=False, error=str(exc)[:500])
+                session.commit()
+                return
+
+            servico = MT5ConnectionService()
+            resultado = servico.test_connection(
+                login=credencial.login,
+                password=senha,
+                server=credencial.server,
+                terminal_path=credencial.terminal_path,
+            )
+            del senha  # fora de escopo o quanto antes
+
+            repo.record_test(
+                credencial,
+                success=resultado.success,
+                error=None if resultado.success else resultado.message[:500],
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception("mt5_credential_test_failed")
+        finally:
+            session.close()
 
     def run(self) -> None:
         """Executa ate receber encerramento do Windows/processo.

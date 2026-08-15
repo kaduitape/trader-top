@@ -85,6 +85,160 @@
         </section>
     </div>
 
+    <div class="col-xl-12">
+        <section class="card">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span><i class="bi bi-key me-2"></i>Conexão MetaTrader 5</span>
+                <span>
+                    {% if not mt5_credential %}
+                    <span class="badge text-bg-secondary">⚪ NÃO CONFIGURADO</span>
+                    {% elif worker_online and mt5_credential.last_test_status == "success" %}
+                    <span class="badge bg-success">🟢 CONECTADO</span>
+                    {% elif mt5_credential.last_test_status == "pending" %}
+                    <span class="badge text-bg-warning">🟡 TESTANDO</span>
+                    {% else %}
+                    <span class="badge text-bg-danger">🔴 DESCONECTADO</span>
+                    {% endif %}
+                </span>
+            </div>
+            <div class="card-body p-4">
+                <div class="row g-4">
+                    <div class="col-lg-7">
+                        <form method="post" action="/dashboard/settings/mt5/credentials">
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-6">
+                                    <label for="mt5_login" class="form-label fw-semibold">Número da conta / Login *</label>
+                                    <input type="number" class="form-control" id="mt5_login" name="login"
+                                           required min="1" placeholder="12345678"
+                                           value="{{ mt5_credential.login if mt5_credential else '' }}">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="mt5_server" class="form-label fw-semibold">Servidor MT5 *</label>
+                                    <input type="text" class="form-control" id="mt5_server" name="server"
+                                           required maxlength="120" placeholder="Broker-MT5-Live"
+                                           value="{{ mt5_credential.server if mt5_credential else '' }}">
+                                    <div class="form-text">Exatamente como aparece no MetaTrader.</div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="mt5_password" class="form-label fw-semibold">
+                                    Senha {% if not mt5_credential %}*{% endif %}
+                                </label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="mt5_password" name="password"
+                                           autocomplete="new-password"
+                                           placeholder="{% if mt5_credential %}{{ mt5_password_mask }} — deixe em branco para manter{% else %}senha da conta{% endif %}"
+                                           {% if not mt5_credential %}required{% endif %}>
+                                    <button class="btn btn-outline-light" type="button" id="mt5-toggle-password"
+                                            aria-label="Mostrar ou ocultar a senha">
+                                        <i class="bi bi-eye" id="mt5-eye"></i>
+                                    </button>
+                                </div>
+                                <div class="form-text">
+                                    Cifrada no banco. <strong>Nunca</strong> volta para esta tela, para a API
+                                    ou para o log — nem mascarada.
+                                </div>
+                            </div>
+
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-8">
+                                    <label for="mt5_terminal_path" class="form-label fw-semibold">Caminho do terminal (opcional)</label>
+                                    <input type="text" class="form-control" id="mt5_terminal_path" name="terminal_path"
+                                           maxlength="500" placeholder="C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+                                           value="{{ mt5_credential.terminal_path or '' if mt5_credential else '' }}">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="mt5_account_type" class="form-label fw-semibold">Tipo de conta</label>
+                                    <select class="form-select" id="mt5_account_type" name="account_type">
+                                        <option value="DEMO" {% if not mt5_credential or mt5_credential.account_type == "DEMO" %}selected{% endif %}>Demo</option>
+                                        <option value="REAL" {% if mt5_credential and mt5_credential.account_type == "REAL" %}selected{% endif %}>Real</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-save me-2"></i>Salvar configurações
+                            </button>
+                        </form>
+
+                        <form method="post" action="/dashboard/settings/mt5/test" class="d-inline"
+                              id="mt5-test-form">
+                            <button type="submit" class="btn btn-outline-light mt-3" id="mt5-test-button">
+                                <i class="bi bi-plug me-2"></i>Testar conexão
+                            </button>
+                        </form>
+                    </div>
+
+                    <div class="col-lg-5">
+                        <dl class="tp-detail-list">
+                            <div>
+                                <dt>Último teste</dt>
+                                <dd>
+                                    {%- if mt5_credential and mt5_credential.last_test_at -%}
+                                    {{ mt5_credential.last_test_at.strftime("%d/%m/%Y %H:%M") }}
+                                    {%- else -%}nunca{%- endif -%}
+                                </dd>
+                            </div>
+                            <div>
+                                <dt>Última conexão bem-sucedida</dt>
+                                <dd>
+                                    {%- if mt5_credential and mt5_credential.last_success_at -%}
+                                    {{ mt5_credential.last_success_at.strftime("%d/%m/%Y %H:%M") }}
+                                    {%- else -%}nunca{%- endif -%}
+                                </dd>
+                            </div>
+                            <div>
+                                <dt>Conector (worker)</dt>
+                                <dd class="{% if worker_online %}text-success{% else %}text-danger{% endif %}">
+                                    {{ "online" if worker_online else "offline" }}
+                                </dd>
+                            </div>
+                        </dl>
+
+                        {% if mt5_credential and mt5_credential.last_error %}
+                        <div class="tp-sync-error mb-3">
+                            <i class="bi bi-exclamation-octagon"></i>
+                            <span>{{ mt5_credential.last_error }}</span>
+                        </div>
+                        {% endif %}
+
+                        <div class="tp-context-note mb-3">
+                            <i class="bi bi-diagram-2"></i>
+                            <div>
+                                O teste roda na <strong>máquina Windows</strong>, não aqui: a
+                                biblioteca <code>MetaTrader5</code> fala com o terminal instalado, e
+                                o painel roda em Linux. O botão pede o teste e espera o conector
+                                responder — por isso ele precisa estar online.
+                            </div>
+                        </div>
+
+                        <div class="tp-context-note">
+                            <i class="bi bi-shield-exclamation"></i>
+                            <div>
+                                <strong>Teste validado ≠ sessão ativa.</strong> Um teste que
+                                funcionou ontem não significa que existe sessão agora — por isso as
+                                duas datas acima são separadas.
+                            </div>
+                        </div>
+
+                        <details class="mt-3">
+                            <summary class="fw-semibold">Diagnóstico MT5</summary>
+                            <p class="small text-muted mt-2">
+                                Verifica biblioteca, terminal e configuração. Nunca revela a senha.
+                            </p>
+                            <form method="post" action="/dashboard/settings/mt5/diagnose">
+                                <button type="submit" class="btn btn-sm btn-outline-light">
+                                    <i class="bi bi-clipboard-pulse me-2"></i>Executar diagnóstico
+                                </button>
+                            </form>
+                        </details>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
     <div class="col-xl-6">
         <section class="card h-100">
             <div class="card-header"><i class="bi bi-cloud-check me-2"></i>API de notícias e fundamentos</div>
@@ -295,4 +449,37 @@
         </dl>
     </div>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Mostrar/ocultar senha e UX do teste. Sem framework: a tela ja e
+    // renderizada no servidor, e um formulario que envia e recarrega nao
+    // precisa de mais que isto.
+    (function () {
+        const campo = document.getElementById("mt5_password");
+        const botao = document.getElementById("mt5-toggle-password");
+        const olho = document.getElementById("mt5-eye");
+        if (campo && botao && olho) {
+            botao.addEventListener("click", function () {
+                const oculto = campo.type === "password";
+                campo.type = oculto ? "text" : "password";
+                olho.className = oculto ? "bi bi-eye-slash" : "bi bi-eye";
+            });
+        }
+
+        // Evita testes simultaneos: a requisicao espera o worker responder e
+        // pode levar dezenas de segundos, tempo de sobra para clicar de novo.
+        const form = document.getElementById("mt5-test-form");
+        const teste = document.getElementById("mt5-test-button");
+        if (form && teste) {
+            form.addEventListener("submit", function () {
+                teste.disabled = true;
+                teste.innerHTML =
+                    '<span class="spinner-border spinner-border-sm me-2" role="status"' +
+                    ' aria-hidden="true"></span>Testando conexão...';
+            });
+        }
+    })();
+</script>
 {% endblock %}

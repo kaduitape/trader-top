@@ -38,6 +38,29 @@ from app.news.factory import AISA_API_KEY_SETTING
 
 SYMBOL = "EURUSD"
 
+# Terca-feira, 14:00 UTC — Londres e Nova York abertas.
+#
+# O instante e CONGELADO de proposito. Antes o teste semeava candles ate
+# `datetime.now()` e deixava a rota usar o relogio real: passava de segunda
+# a sexta e falhava no sabado, quando o radar (corretamente) nao aprova
+# nada com o mercado fechado. Um teste que so passa em dia util mente no
+# fim de semana.
+INSTANTE = datetime(2026, 7, 7, 14, 0, tzinfo=UTC)
+
+
+class _RelogioFixo(datetime):
+    """`datetime` cujo `now` nao anda — para congelar a rota."""
+
+    @classmethod
+    def now(cls, tz=None):  # noqa: ARG003
+        return INSTANTE
+
+
+@pytest.fixture
+def relogio_parado(monkeypatch):
+    monkeypatch.setattr("app.api.routes.dashboard.datetime", _RelogioFixo)
+    return INSTANTE
+
 
 def _reset(db_session) -> None:
     repo = SystemSettingRepository(db_session)
@@ -98,7 +121,7 @@ def seed_tradable_symbol(db_session, name: str = SYMBOL) -> None:
             visible=True,
         )
     )
-    agora = datetime.now(UTC)
+    agora = INSTANTE
     preco = 1.10
     candles = []
     for i in range(300):
@@ -208,8 +231,9 @@ def test_the_toggle_is_audited(logged_in, db_session) -> None:
 # --- gravar agora ----------------------------------------------------------
 
 
-def test_the_button_records_a_sample(logged_in, db_session) -> None:
+def test_the_button_records_a_sample(logged_in, db_session, relogio_parado) -> None:
     """Era exatamente isto que exigia `scanner run --record`."""
+    del relogio_parado
     seed_tradable_symbol(db_session)
 
     response = logged_in.post("/dashboard/scanner/record", follow_redirects=False)

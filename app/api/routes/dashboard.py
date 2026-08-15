@@ -35,6 +35,7 @@ from app.calendar_feed.policy import (
 )
 from app.core.build_info import code_version, versions_match
 from app.core.config import get_settings
+from app.core.crypto import MASK
 from app.core.enums import SystemMode
 from app.core.system_mode import SystemModeError, validate_transition
 from app.database.models.user import User
@@ -45,6 +46,7 @@ from app.database.repositories.audit_log_repository import AuditLogRepository
 from app.database.repositories.candle_repository import CandleRepository
 from app.database.repositories.drift_event_repository import DriftEventRepository
 from app.database.repositories.live_trade_repository import LiveTradeRepository
+from app.database.repositories.mt5_credential_repository import Mt5CredentialRepository
 from app.database.repositories.paper_trade_repository import PaperTradeRepository
 from app.database.repositories.symbol_repository import SymbolRepository
 from app.database.repositories.system_setting_repository import (
@@ -1678,10 +1680,114 @@ def dashboard_settings_hub(
             "broker": settings.broker,
             "calendar_file": settings.calendar_file_path or "",
             "calendar_policy": load_calendar_policy(db, settings),
+            "mt5_credential": Mt5CredentialRepository(db).get_active(),
+            "mt5_password_mask": MASK,
             "impacts": IMPACTS,
             "saved": saved,
             "error": error,
         },
+    )
+
+
+@router.post("/dashboard/settings/mt5/credentials")
+def dashboard_mt5_credentials_save(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    login: int = Form(...),
+    server: str = Form(...),
+    account_type: str = Form("DEMO"),
+    terminal_path: str = Form(""),
+    password: str = Form(""),
+) -> RedirectResponse:
+    """Cadastra/edita a conta MT5. Senha em branco MANTEM a atual."""
+    repo = Mt5CredentialRepository(db)
+    try:
+        repo.save(
+            login=login,
+            server=server,
+            account_type=account_type,
+            terminal_path=terminal_path,
+            password=password or None,
+        )
+    except ValueError as exc:
+        db.rollback()
+        return RedirectResponse(
+            url=f"/dashboard/settings?error={quote(str(exc))}", status_code=303
+        )
+
+    AuditLogRepository(db).record(
+        action="mt5_credentials_save",
+        entity="mt5_credentials",
+        # Senha nunca entra aqui, nem para dizer que mudou.
+        detail=(
+            f"conta {login}@{server} ({account_type}) por {user.username}"
+            + (" — senha atualizada" if password else "")
+        ),
+        user_id=user.id,
+    )
+    db.commit()
+    return RedirectResponse(
+        url="/dashboard/settings?saved="
+        + quote(f"Conta MT5 {login}@{server} salva. A senha fica cifrada no banco."),
+        status_code=303,
+    )
+
+
+@router.post("/dashboard/settings/mt5/diagnose")
+def dashboard_mt5_diagnose(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Diagnostico do ambiente. Roda NO PAINEL de proposito.
+
+    Aqui ele quase sempre vai dizer "biblioteca nao instalada" — e essa e a
+    informacao correta: o painel roda em Linux. O diagnostico util do lado
+    do terminal chega junto do teste, executado pelo worker.
+    """
+    del user
+    from app.mt5.connection_service import MT5ConnectionService
+
+    credencial = Mt5CredentialRepository(db).get_active()
+    diagnostico = MT5ConnectionService().diagnose(
+        login=credencial.login if credencial else None,
+        server=credencial.server if credencial else None,
+        terminal_path=credencial.terminal_path if credencial else None,
+    )
+    linhas = [
+        f"Biblioteca MetaTrader5: {'SIM' if diagnostico.library_installed else 'NAO'}"
+        + (f" (v{diagnostico.library_version})" if diagnostico.library_version else ""),
+        f"Terminal encontrado: {'SIM' if diagnostico.terminal_found else 'NAO'}",
+        f"Caminho: {diagnostico.terminal_path or '(padrao do sistema)'}",
+        f"Terminal inicializado: {'SIM' if diagnostico.terminal_initialized else 'NAO'}",
+        f"Servidor configurado: {'SIM' if diagnostico.server_configured else 'NAO'}",
+        f"Conta configurada: {'SIM' if diagnostico.account_configured else 'NAO'}",
+    ]
+    if diagnostico.last_error_message:
+        linhas.append(f"Ultimo erro: {diagnostico.last_error_message}")
+    if not diagnostico.library_installed:
+        linhas.append(
+            "Este diagnostico roda no painel (Linux). O ambiente que importa "
+            "e o do conector Windows — use Testar conexao para exercitar ele."
+        )
+    return RedirectResponse(
+        url="/dashboard/settings?saved=" + quote(" | ".join(linhas)[:1200]),
+        status_code=303,
+    )
+
+
+@router.post("/dashboard/settings/mt5/test")
+def dashboard_mt5_credentials_test(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Delegado ao worker: e ele que roda ao lado do terminal."""
+    from app.api.routes.mt5_settings import mt5_test
+
+    resultado = mt5_test(db=db, user=user)
+    campo = "saved" if resultado.success else "error"
+    return RedirectResponse(
+        url=f"/dashboard/settings?{campo}=" + quote(resultado.message[:900]),
+        status_code=303,
     )
 
 

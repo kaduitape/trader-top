@@ -8,6 +8,7 @@ from app.database.models.candle import Candle
 from app.database.models.data_quality_event import DataQualityEvent
 from app.database.models.drift_event import DriftEvent
 from app.database.models.live_trade import LiveTrade
+from app.database.models.mt5_credential import Mt5Credential
 from app.database.models.paper_trade import PaperTrade
 from app.database.models.symbol import Symbol
 from app.database.models.system_setting import SystemSetting
@@ -21,6 +22,7 @@ __all__ = [
     "DataQualityEvent",
     "DriftEvent",
     "LiveTrade",
+    "Mt5Credential",
     "PaperTrade",
     "Symbol",
     "SystemSetting",
