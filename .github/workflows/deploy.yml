@@ -33,7 +33,6 @@ jobs:
             main.py,
             alembic.ini,
             Dockerfile,
-            pyproject.toml,
             docker-compose.yml,
             .dockerignore,
             .env.example
