@@ -1,0 +1,88 @@
+name: Deploy VPS
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: trader-top-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enviar arquivos da API
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          source: >-
+            app,
+            alembic,
+            docker/entrypoint.sh,
+            main.py,
+            alembic.ini,
+            Dockerfile,
+            pyproject.toml,
+            docker-compose.yml,
+            .dockerignore,
+            .env.example
+          target: /var/www/trader-top
+          overwrite: true
+
+      - name: Atualizar API e banco
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          timeout: 120s
+          command_timeout: 15m
+          script: |
+            set -eu
+            cd /var/www/trader-top
+
+            test -f .env
+            docker compose config --quiet
+            docker compose build app
+            docker compose up -d db
+
+            for attempt in $(seq 1 30); do
+              status="$(docker inspect --format='{{.State.Health.Status}}' trader-top-db-1 2>/dev/null || true)"
+              [ "$status" = "healthy" ] && break
+              echo "Aguardando banco ($attempt/30): ${status:-indisponivel}"
+              sleep 2
+            done
+
+            test "$(docker inspect --format='{{.State.Health.Status}}' trader-top-db-1)" = "healthy"
+            docker compose up -d --no-deps app
+
+            for attempt in $(seq 1 30); do
+              if curl -fsS --max-time 5 http://127.0.0.1:8000/health; then
+                echo
+                break
+              fi
+              echo "Aguardando API ($attempt/30)"
+              sleep 2
+            done
+
+            curl -fsS --max-time 10 http://127.0.0.1:8000/health
+            echo
+            docker compose ps app db
+
+            if docker ps -a --filter label=com.docker.compose.project=trader-top --format '{{.Names}}' \
+              | grep -Eq '^trader-top-(mt5-wine|mt5-worker)-'; then
+              echo "Erro: a pipeline nao deve criar MT5/Wine nem worker." >&2
+              exit 1
+            fi
