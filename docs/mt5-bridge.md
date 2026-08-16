@@ -1,5 +1,9 @@
 # Ponte para o MetaTrader em container (mt5-wine)
 
+Para **subir** os serviços, ver `docs/mt5-wine-docker.md`. Este documento
+explica o que a ponte é, como apontá-la pelo painel e como descobrir por que
+ela não conecta.
+
 ## O problema que ela resolve
 
 O pacote `MetaTrader5` não é uma API da corretora: é um cliente local que
@@ -36,9 +40,21 @@ O endereço HTTPS que a Hostinger fornece (`https://…hstgr.cloud/`) é a
 interface **noVNC**, para você ver a tela do MetaTrader pelo navegador. Ele
 não é a ponte e não serve como host aqui.
 
-## Configurando (painel e MT5 na mesma VPS)
+## Configurando
 
-No painel, em **Configurações → Conexão MetaTrader 5**:
+### Caso normal: tudo no mesmo `docker-compose.yml`
+
+Não há nada a fazer. O serviço `mt5-wine` está no mesmo Compose e o painel
+já sobe com `MT5_BRIDGE_HOST=mt5-wine`. Deixe os campos de ponte **em
+branco** no painel; preencha só login, senha e servidor.
+
+O que está salvo no painel tem precedência sobre `MT5_BRIDGE_HOST`. Isso
+existe para o caso abaixo — e para que "salvei na tela e não mudou nada"
+nunca aconteça.
+
+### Caso do MetaTrader em outro container
+
+Em **Configurações → Conexão MetaTrader 5**:
 
 | Campo | Valor |
 |---|---|
@@ -46,14 +62,10 @@ No painel, em **Configurações → Conexão MetaTrader 5**:
 | Porta da ponte | `18812` |
 | Login / Senha / Servidor | os da conta na corretora |
 
-O que está salvo no painel tem precedência sobre `MT5_BRIDGE_HOST` do
-`.env`. O ambiente continua valendo como padrão quando o campo está vazio —
-instalações antigas não quebram.
-
 Com o host preenchido, o botão **Testar conexão** roda no próprio painel:
 não exige o worker Windows.
 
-### Os dois containers precisam se enxergar
+#### Os dois containers precisam se enxergar
 
 O nome do container só resolve para quem está na **mesma rede Docker**. Se
 o MetaTrader subiu por outro `docker compose`, ele está em outra rede por

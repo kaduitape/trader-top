@@ -163,12 +163,18 @@
                                         Host da ponte (MetaTrader em container)
                                     </label>
                                     <input type="text" class="form-control" id="mt5_bridge_host" name="bridge_host"
-                                           maxlength="200" placeholder="mt5"
+                                           maxlength="200" placeholder="mt5-wine"
                                            value="{{ mt5_bridge_host if not mt5_bridge_from_env else '' }}">
                                     <div class="form-text">
-                                        Nome do <strong>container</strong> do MetaTrader (ex.: <code>mt5</code>,
-                                        <code>mt5-wine</code>) — não a URL do noVNC. Deixe em branco se o
+                                        {% if mt5_bridge_from_env %}
+                                        Já resolvido pelo Compose como <code>{{ mt5_bridge }}</code>.
+                                        Deixe em branco — só preencha para apontar para
+                                        <strong>outro</strong> container.
+                                        {% else %}
+                                        Nome do <strong>container</strong> do MetaTrader (ex.:
+                                        <code>mt5-wine</code>) — não a URL do noVNC. Em branco = o
                                         terminal roda no Windows, ao lado do conector.
+                                        {% endif %}
                                     </div>
                                 </div>
                                 <div class="col-md-4">

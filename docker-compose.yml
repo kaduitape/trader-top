@@ -71,8 +71,10 @@ services:
       APP_PORT: 8000
       SYSTEM_MODE: DISABLED
       DASHBOARD_AUTH_DISABLED: ${DASHBOARD_AUTH_DISABLED:-false}
-      MT5_BRIDGE_HOST: mt5-wine
-      MT5_BRIDGE_PORT: 18812
+      # Padrao aponta para o servico deste compose. O valor salvo no painel
+      # tem precedencia sobre isto (ver app/mt5/bridge.py::resolve_target).
+      MT5_BRIDGE_HOST: ${MT5_BRIDGE_HOST:-mt5-wine}
+      MT5_BRIDGE_PORT: ${MT5_BRIDGE_PORT:-18812}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
@@ -95,10 +97,6 @@ services:
       # Sem isto, o container cai no APP_SECRET_KEY para cifrar credenciais —
       # e trocar o secret de sessao tornaria a senha do MT5 indecifravel.
       CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
-      # Ponte para um MetaTrader sob Wine em outro container. Serve de padrao:
-      # o valor salvo no painel tem precedencia.
-      MT5_BRIDGE_HOST: ${MT5_BRIDGE_HOST:-}
-      MT5_BRIDGE_PORT: ${MT5_BRIDGE_PORT:-18812}
       AISA_API_KEY: ${AISA_API_KEY:-}
       AISA_API_BASE_URL: ${AISA_API_BASE_URL:-}
       RUN_PREFLIGHT: ${RUN_PREFLIGHT:-true}
@@ -153,8 +151,11 @@ services:
       LOG_DIR: /app/logs
       ML_MODELS_DIR: /app/models
       ML_DATASETS_DIR: /app/datasets
-      MT5_BRIDGE_HOST: mt5-wine
-      MT5_BRIDGE_PORT: 18812
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
+      # Padrao aponta para o servico deste compose. O valor salvo no painel
+      # tem precedencia sobre isto (ver app/mt5/bridge.py::resolve_target).
+      MT5_BRIDGE_HOST: ${MT5_BRIDGE_HOST:-mt5-wine}
+      MT5_BRIDGE_PORT: ${MT5_BRIDGE_PORT:-18812}
       RUN_PREFLIGHT: "false"
     command:
       [
