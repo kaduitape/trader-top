@@ -1,4 +1,31 @@
 services:
+  # Terminal MT5 Windows executado sob Wine. A porta da ponte Python fica
+  # somente na rede interna do Compose; a interface noVNC e limitada ao host
+  # para o primeiro login/manual de diagnostico em http://localhost:8081.
+  mt5-wine:
+    build:
+      context: .
+      dockerfile: docker/mt5-wine.Dockerfile
+    image: trader-top-mt5-wine
+    restart: unless-stopped
+    environment:
+      MT5_HOST: 0.0.0.0
+      MT5_LOGIN: ${MT5_LOGIN:-}
+      MT5_PASSWORD: ${MT5_PASSWORD:-}
+      MT5_SERVER: ${MT5_SERVER:-}
+      VNC_PASSWORD: ${MT5_VNC_PASSWORD:?defina MT5_VNC_PASSWORD no .env}
+      NOVNC_HOST: localhost
+    ports:
+      - "127.0.0.1:${MT5_VNC_PORT:-8081}:8080"
+    expose:
+      - "18812"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/18812'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 45s
+
   db:
     image: mysql:8.0
     restart: unless-stopped
@@ -35,6 +62,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      mt5-wine:
+          condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
       APP_SECRET_KEY: ${APP_SECRET_KEY:?defina APP_SECRET_KEY no .env}
@@ -42,6 +71,8 @@ services:
       APP_PORT: 8000
       SYSTEM_MODE: DISABLED
       DASHBOARD_AUTH_DISABLED: ${DASHBOARD_AUTH_DISABLED:-false}
+      MT5_BRIDGE_HOST: mt5-wine
+      MT5_BRIDGE_PORT: 18812
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
@@ -82,6 +113,47 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    stop_grace_period: 20s
+
+  # Worker continuo que usa a ponte mt5linux. Ele so inicia depois que a API
+  # concluiu as migrations e esta saudavel, evitando duas inicializacoes do
+  # banco durante o boot.
+  mt5-worker:
+    build: .
+    restart: unless-stopped
+    init: true
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?defina APP_SECRET_KEY no .env}
+      SYSTEM_MODE: DISABLED
+      DB_DRIVER: mysql+pymysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-mt5_ai_scalper}
+      DB_USER: ${DB_USER:-scalper}
+      DB_PASSWORD: ${DB_PASSWORD:-CHANGE_ME}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_POOL_MAX_OVERFLOW: ${DB_POOL_MAX_OVERFLOW:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_DIR: /app/logs
+      ML_MODELS_DIR: /app/models
+      ML_DATASETS_DIR: /app/datasets
+      MT5_BRIDGE_HOST: mt5-wine
+      MT5_BRIDGE_PORT: 18812
+      RUN_PREFLIGHT: "false"
+    command:
+      [
+        "python",
+        "-c",
+        "from app.mt5.auto_sync import MT5AutoSyncWorker; MT5AutoSyncWorker().run()",
+      ]
+    volumes:
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./datasets:/app/datasets
     stop_grace_period: 20s
 
 volumes:

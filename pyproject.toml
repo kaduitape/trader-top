@@ -35,6 +35,12 @@ dependencies = [
     # porque codigo de aplicacao (nao so teste) agora tem um motivo concreto
     # para chamar uma API externa.
     "httpx>=0.27",
+    # Ponte cliente para o terminal MT5 executado sob Wine no servico
+    # `mt5-wine`. So e usada quando MT5_BRIDGE_HOST estiver configurado.
+    "mt5linux==1.0.3",
+    # A imagem mt5-installed executa o servidor Windows com RPyC 5.2.3.
+    # RPyC 6 muda o protocolo e falha com "invalid message type: 18".
+    "rpyc==5.2.3",
 ]
 
 [project.optional-dependencies]

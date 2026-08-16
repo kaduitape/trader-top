@@ -11,6 +11,8 @@ def _config(**overrides: object) -> MT5ConnectionConfig:
         "login": None,
         "password": None,
         "server": None,
+        "bridge_host": None,
+        "bridge_port": 18812,
         "timeout_ms": 1000,
         "max_reconnect_attempts": 3,
         "reconnect_backoff_seconds": 1.0,

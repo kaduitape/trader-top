@@ -637,7 +637,7 @@ class MT5AutoSyncWorker:
         if test_pending:
             # O painel nao consegue falar com o terminal (Linux, sem a
             # biblioteca). Quem executa o teste de credencial e este worker.
-            self._run_credential_test()
+            self._run_credential_test(connection.client)
             status = replace(
                 status,
                 handled_test_request_id=config.test_request_id,
@@ -691,7 +691,7 @@ class MT5AutoSyncWorker:
 
         self._stop.wait(min(5, config.interval_seconds))
 
-    def _run_credential_test(self) -> None:
+    def _run_credential_test(self, client: MT5ClientProtocol) -> None:
         """Testa a credencial cadastrada e publica o resultado no banco.
 
         Nunca derruba o ciclo: um teste que explode e um teste que falhou,
@@ -718,12 +718,16 @@ class MT5AutoSyncWorker:
                 session.commit()
                 return
 
-            servico = MT5ConnectionService()
+            servico = MT5ConnectionService(client=client)
             resultado = servico.test_connection(
                 login=credencial.login,
                 password=senha,
                 server=credencial.server,
-                terminal_path=credencial.terminal_path,
+                # Esse caminho pertence ao Windows/Wine remoto e nao existe
+                # no filesystem Linux do worker.
+                terminal_path=(
+                    None if self._settings.mt5_bridge_host else credencial.terminal_path
+                ),
             )
             del senha  # fora de escopo o quanto antes
 

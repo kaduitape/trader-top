@@ -28,6 +28,8 @@ class MT5ConnectionConfig:
     login: int | None
     password: str | None
     server: str | None
+    bridge_host: str | None
+    bridge_port: int
     timeout_ms: int
     max_reconnect_attempts: int
     reconnect_backoff_seconds: float
@@ -39,13 +41,28 @@ class MT5ConnectionConfig:
             login=settings.mt5_login,
             password=settings.mt5_password,
             server=settings.mt5_server,
+            bridge_host=settings.mt5_bridge_host,
+            bridge_port=settings.mt5_bridge_port,
             timeout_ms=settings.mt5_timeout_ms,
             max_reconnect_attempts=settings.mt5_max_reconnect_attempts,
             reconnect_backoff_seconds=settings.mt5_reconnect_backoff_seconds,
         )
 
 
-def _import_real_client() -> MT5ClientProtocol:
+def _import_real_client(config: MT5ConnectionConfig) -> MT5ClientProtocol:
+    if config.bridge_host:
+        try:
+            from mt5linux import MetaTrader5
+        except ModuleNotFoundError as exc:
+            raise MT5ConnectionError(
+                "Ponte MT5 configurada, mas o pacote 'mt5linux' nao esta instalado."
+            ) from exc
+        return MetaTrader5(
+            host=config.bridge_host,
+            port=config.bridge_port,
+            timeout=max(5.0, config.timeout_ms / 1000),
+        )
+
     try:
         import MetaTrader5
     except ModuleNotFoundError as exc:
@@ -74,7 +91,7 @@ class MT5Connection:
         sleep_fn: Callable[[float], None] = time.sleep,
     ) -> None:
         self._config = config
-        self._client = client if client is not None else _import_real_client()
+        self._client = client if client is not None else _import_real_client(config)
         self._sleep = sleep_fn
         self._connected = False
         self.last_known_login: int | None = None
@@ -98,10 +115,12 @@ class MT5Connection:
         omitir o kwarg por completo (em vez de passar `None`) e o unico
         jeito de reaproveitar essa sessao ja logada, sem MT5_LOGIN/
         MT5_PASSWORD/MT5_SERVER no `.env`."""
-        kwargs: dict[str, Any] = {
-            "path": self._config.terminal_path,
-            "timeout": self._config.timeout_ms,
-        }
+        kwargs: dict[str, Any] = {"timeout": self._config.timeout_ms}
+        # O caminho Windows so faz sentido quando Python e terminal rodam
+        # na mesma maquina. Pela ponte Wine o terminal ja esta iniciado no
+        # outro container, portanto passar ``C:\\...`` impede a conexao.
+        if self._config.terminal_path and not self._config.bridge_host:
+            kwargs["path"] = self._config.terminal_path
         if self._config.login is not None:
             kwargs["login"] = self._config.login
         if self._config.password is not None:

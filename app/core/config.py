@@ -94,7 +94,6 @@ class Settings(BaseSettings):
     pacote `MetaTrader5` local, so no Windows."""
 
     mt5_bridge_port: int = 18812
-
     mt5_timeout_ms: int = 10_000
     mt5_max_reconnect_attempts: int = 5
     mt5_reconnect_backoff_seconds: float = 2.0
