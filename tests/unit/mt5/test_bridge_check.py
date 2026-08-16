@@ -269,3 +269,81 @@ def test_the_probe_stops_at_the_first_port_that_answers(monkeypatch) -> None:
 
     assert len(nomes) == len(set(nomes))
     assert all(porta == 18812 for _, porta in achados)
+
+
+# --- o que mais esta aberto ------------------------------------------------
+
+
+def test_only_screen_ports_open_means_the_server_did_not_start(monkeypatch) -> None:
+    """Conclusao, nao palpite: se so o noVNC responde, o container subiu e o
+    servidor RPyC nao. Sao correcoes diferentes — esperar/ler log contra
+    mexer em rede."""
+
+    def conecta(endereco, timeout=None):
+        if endereco[1] in (3000, 3001):
+            return _Fechavel()
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(socket, "create_connection", conecta)
+
+    passo = bridge_check._check_tcp("mt5", 8001, timeout=1.0)
+
+    assert passo.ok is False
+    assert "noVNC" in passo.detail
+    assert "docker logs" in passo.detail
+
+
+def test_the_bridge_on_another_port_is_found(monkeypatch) -> None:
+    """Porta errada e servidor ausente produzem a mesma recusa; so a sonda
+    separa."""
+
+    def conecta(endereco, timeout=None):
+        if endereco[1] == 18812:
+            return _Fechavel()
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(socket, "create_connection", conecta)
+
+    passo = bridge_check._check_tcp("mt5", 8001, timeout=1.0)
+
+    assert "18812" in passo.detail
+    assert "Porta da ponte" in passo.detail
+
+
+def test_nothing_open_at_all_is_reported_as_such(monkeypatch) -> None:
+    def recusa(endereco, timeout=None):
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(socket, "create_connection", recusa)
+
+    passo = bridge_check._check_tcp("mt5", 8001, timeout=1.0)
+
+    assert "Nenhuma outra porta" in passo.detail
+
+
+def test_an_unreachable_host_does_not_trigger_the_scan(monkeypatch) -> None:
+    """So a recusa ATIVA prova que o host responde. Sem host, varrer seria
+    somar segundos a um diagnostico que ja sabe a resposta."""
+    chamadas: list[tuple] = []
+
+    def sem_rota(endereco, timeout=None):
+        chamadas.append(endereco)
+        raise OSError(113, "No route to host")
+
+    monkeypatch.setattr(socket, "create_connection", sem_rota)
+
+    passo = bridge_check._check_tcp("mt5", 8001, timeout=1.0)
+
+    assert len(chamadas) == 1, "varreu portas de um host que nao respondeu"
+    assert "Container parado" in passo.detail
+
+
+def test_a_timeout_keeps_its_own_message(monkeypatch) -> None:
+    """Tempo esgotado e host inacessivel nao sao a mesma coisa."""
+
+    def expira(endereco, timeout=None):
+        raise TimeoutError("sem resposta")
+
+    monkeypatch.setattr(socket, "create_connection", expira)
+
+    assert "esgotado" in bridge_check._check_tcp("mt5", 8001, timeout=1.0).detail

@@ -141,6 +141,26 @@ def _check_dns(host: str, port: int = 0) -> Step:
     return Step("Nome resolve", True, f"{host} -> {endereco}")
 
 
+# Portas que essas imagens costumam abrir. As de tela (3000/3001) entram de
+# proposito: se SO elas responderem, isso prova que o container subiu e que
+# o servidor RPyC nao — que e uma conclusao, nao um palpite.
+_PORTAS_DE_SONDA = (*_PORTAS_CONHECIDAS, 18813, 3000, 3001)
+
+
+def scan_ports(host: str, *, timeout: float = 1.0, skip: int = 0) -> list[int]:
+    """Portas abertas neste host, entre as conhecidas dessas imagens."""
+    abertas: list[int] = []
+    for porta in _PORTAS_DE_SONDA:
+        if porta == skip:
+            continue
+        try:
+            with socket.create_connection((host, porta), timeout=timeout):
+                abertas.append(porta)
+        except OSError:
+            continue
+    return abertas
+
+
 def _check_tcp(host: str, port: int, *, timeout: float) -> Step:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -158,12 +178,39 @@ def _check_tcp(host: str, port: int, *, timeout: float) -> Step:
         # e um erro de familia de endereco costuma ser filtro de saida do
         # ambiente que roda o teste, nao problema do destino.
         motivo = exc.strerror or type(exc).__name__
-        return Step(
-            "Porta acessivel",
-            False,
-            f"{host}:{port} nao aceitou conexao: {motivo}. Container parado, "
-            "porta so interna e o painel fora da rede, ou porta diferente.",
-        )
+        detalhe = f"{host}:{port} nao aceitou conexao: {motivo}."
+
+        if isinstance(exc, ConnectionRefusedError):
+            # O host respondeu, entao da para perguntar a ele o que MAIS esta
+            # aberto — e isso separa "porta errada" de "servidor nao subiu"
+            # sem ninguem precisar entrar no servidor.
+            abertas = scan_ports(host, skip=port)
+            if not abertas:
+                detalhe += (
+                    " Nenhuma outra porta conhecida responde: o container "
+                    "esta de pe, mas os servicos dele ainda nao subiram."
+                )
+            elif any(p in abertas for p in _PORTAS_CONHECIDAS):
+                candidatas = [p for p in abertas if p in _PORTAS_CONHECIDAS]
+                detalhe += (
+                    f" Mas a ponte responde em {candidatas} — corrija o campo "
+                    "'Porta da ponte'."
+                )
+            else:
+                detalhe += (
+                    f" Abertas: {abertas} — sao portas de tela (noVNC), nao a "
+                    "ponte. O container subiu, mas o servidor RPyC nao: nessas "
+                    "imagens ele e o ULTIMO passo, depois de instalar "
+                    "MetaTrader, Wine e Python. Veja `docker logs` do "
+                    "container."
+                )
+        else:
+            detalhe += (
+                " Container parado, porta so interna e o painel fora da rede, "
+                "ou porta diferente."
+            )
+
+        return Step("Porta acessivel", False, detalhe)
     return Step("Porta acessivel", True, f"{host}:{port} aceita conexao")
 
 
