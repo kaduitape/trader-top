@@ -1,0 +1,34 @@
+# Liga o painel a rede onde vive o container do MetaTrader.
+#
+# ## Por que e um arquivo separado
+#
+# A ligacao precisa ser duravel: o deploy recria o container `app`, e uma
+# rede anexada a mao com `docker network connect` se perde exatamente ai.
+# Declarar no Compose resolve — mas so faz sentido para quem TEM esse
+# container.
+#
+# Uma rede externa nao pode ser condicional dentro de um unico
+# `docker-compose.yml`: ou ela e declarada e precisa existir, ou nao e. Um
+# valor padrao tambem nao serve — apontar para a rede legada `bridge`
+# derruba o `up`, porque ela nao aceita os aliases de rede que o Compose
+# sempre registra. Entao a escolha vira o que ela e de fato: um arquivo a
+# mais, usado por quem precisa.
+#
+# ## Uso
+#
+#   MT5_NETWORK=metatrader-5-9p2b_default   # veja com `docker network ls`
+#   docker compose -f docker-compose.yml -f docker-compose.mt5-network.yml up -d app
+#
+# O pipeline de deploy inclui este arquivo sozinho quando `MT5_NETWORK`
+# esta definido no `.env` da maquina.
+
+services:
+  app:
+    networks:
+      - default
+      - mt5
+
+networks:
+  mt5:
+    external: true
+    name: ${MT5_NETWORK:?defina MT5_NETWORK no .env com a rede do MetaTrader}

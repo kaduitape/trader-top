@@ -106,9 +106,6 @@ services:
       AISA_API_KEY: ${AISA_API_KEY:-}
       AISA_API_BASE_URL: ${AISA_API_BASE_URL:-}
       RUN_PREFLIGHT: ${RUN_PREFLIGHT:-true}
-    networks:
-      - default
-      - mt5
     extra_hosts:
       # Permite apontar a ponte do MetaTrader para `host.docker.internal`
       # quando o container do MT5 vive em outro projeto compose e publica a
@@ -182,17 +179,6 @@ services:
       - ./models:/app/models
       - ./datasets:/app/datasets
     stop_grace_period: 20s
-
-networks:
-  default:
-  mt5:
-    # Rede onde vive o container do MetaTrader. Aponte MT5_NETWORK para ela
-    # no `.env` (ex.: metatrader-5-9p2b_default) e o painel passa a enxergar
-    # o terminal por nome, de forma duravel: o deploy recria o `app`, e uma
-    # rede anexada a mao com `docker network connect` se perderia ai.
-    # O padrao `bridge` existe em qualquer host Docker e nao muda nada.
-    external: true
-    name: ${MT5_NETWORK:-bridge}
 
 volumes:
   mysql_data:

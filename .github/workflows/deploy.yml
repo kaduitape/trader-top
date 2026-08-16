@@ -34,6 +34,7 @@ jobs:
             alembic.ini,
             Dockerfile,
             docker-compose.yml,
+            docker-compose.mt5-network.yml,
             .dockerignore,
             .env.example
           target: /var/www/trader-top
@@ -53,9 +54,20 @@ jobs:
             cd /var/www/trader-top
 
             test -f .env
-            docker compose config --quiet
-            docker compose build app
-            docker compose up -d db
+
+            # Quando MT5_NETWORK esta definido, o painel sobe tambem na rede
+            # do container do MetaTrader. Declarado no Compose, e nao com
+            # `docker network connect`, porque este passo recria o container
+            # `app` — e uma rede anexada a mao se perderia aqui.
+            COMPOSE="-f docker-compose.yml"
+            if grep -Eq '^MT5_NETWORK=..*' .env; then
+              COMPOSE="$COMPOSE -f docker-compose.mt5-network.yml"
+              echo "Rede do MetaTrader: $(grep -E '^MT5_NETWORK=' .env)"
+            fi
+
+            docker compose $COMPOSE config --quiet
+            docker compose $COMPOSE build app
+            docker compose $COMPOSE up -d db
 
             for attempt in $(seq 1 30); do
               status="$(docker inspect --format='{{.State.Health.Status}}' trader-top-db-1 2>/dev/null || true)"
@@ -65,7 +77,7 @@ jobs:
             done
 
             test "$(docker inspect --format='{{.State.Health.Status}}' trader-top-db-1)" = "healthy"
-            docker compose up -d --no-deps app
+            docker compose $COMPOSE up -d --no-deps app
 
             for attempt in $(seq 1 30); do
               if curl -fsS --max-time 5 http://127.0.0.1:8000/health; then
@@ -78,7 +90,7 @@ jobs:
 
             curl -fsS --max-time 10 http://127.0.0.1:8000/health
             echo
-            docker compose ps app db
+            docker compose $COMPOSE ps app db
 
             if docker ps -a --filter label=com.docker.compose.project=trader-top --format '{{.Names}}' \
               | grep -Eq '^trader-top-(mt5-wine|mt5-worker)-'; then

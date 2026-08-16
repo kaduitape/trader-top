@@ -57,9 +57,17 @@ Dois passos, e o primeiro é de rede.
 MT5_NETWORK=metatrader-5-9p2b_default    # veja com `docker network ls`
 ```
 
+E suba usando o arquivo de rede:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.mt5-network.yml up -d app
+```
+
+(O pipeline de deploy inclui esse arquivo sozinho quando `MT5_NETWORK` está
+no `.env`.)
+
 Isso é duradouro: o deploy recria o container `app`, e uma rede anexada à
-mão com `docker network connect` se perderia exatamente aí. Com
-`MT5_NETWORK`, o Compose reanexa a cada subida.
+mão com `docker network connect` se perderia exatamente aí.
 
 **2. Aponte a ponte** em **Configurações → Conexão MetaTrader 5**:
 
