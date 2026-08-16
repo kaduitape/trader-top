@@ -32,6 +32,9 @@ def test_catalog_contains_xauusd_and_broad_forex_coverage() -> None:
     assert "XAUUSD" in codes
     assert "EURUSD" in codes
     assert "GBPJPY" in codes
+    assert "MNQU6" in codes
+    assert "USTEC" in codes
+    assert "BTCUSD" in codes
     assert len(codes) >= 30
 
 
@@ -58,8 +61,10 @@ def test_catalog_does_not_mark_inactive_symbol_as_available(db_session) -> None:
 def test_grouped_availability_has_all_market_sections() -> None:
     grouped = grouped_availability([])
 
-    assert set(grouped) == {"MAJORS", "CROSSES", "EXOTICS", "METALS"}
+    assert set(grouped) == {"MAJORS", "CROSSES", "EXOTICS", "METALS", "INDICES", "CRYPTO"}
     assert any(item.instrument.code == "XAGUSD" for item in grouped["METALS"])
+    assert any(item.instrument.code == "USTEC" for item in grouped["INDICES"])
+    assert any(item.instrument.code == "BTCUSD" for item in grouped["CRYPTO"])
 
 
 def test_resolve_broker_symbol_prefers_exact_then_shortest_suffix() -> None:

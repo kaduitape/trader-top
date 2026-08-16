@@ -12,7 +12,7 @@ from typing import Literal
 
 from app.database.models.symbol import Symbol
 
-MarketGroup = Literal["MAJORS", "CROSSES", "EXOTICS", "METALS"]
+MarketGroup = Literal["MAJORS", "CROSSES", "EXOTICS", "METALS", "INDICES", "CRYPTO"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +68,9 @@ MARKET_CATALOG: tuple[MarketInstrument, ...] = (
     MarketInstrument("USDMXN", "Dolar / Peso Mexicano", "EXOTICS", "USD", "MXN"),
     MarketInstrument("XAUUSD", "Ouro / Dolar", "METALS", "XAU", "USD", "bi-gem"),
     MarketInstrument("XAGUSD", "Prata / Dolar", "METALS", "XAG", "USD", "bi-gem"),
+    MarketInstrument("MNQU6", "Micro E-mini Nasdaq-100", "INDICES", "MNQ", "USD", "bi-graph-up"),
+    MarketInstrument("USTEC", "Nasdaq-100 / US Tech", "INDICES", "USTEC", "USD", "bi-graph-up"),
+    MarketInstrument("BTCUSD", "Bitcoin / Dolar", "CRYPTO", "BTC", "USD", "bi-currency-bitcoin"),
 )
 
 GROUP_LABELS: dict[MarketGroup, str] = {
@@ -75,6 +78,8 @@ GROUP_LABELS: dict[MarketGroup, str] = {
     "MAJORS": "Pares principais",
     "CROSSES": "Pares cruzados",
     "EXOTICS": "Pares exoticos",
+    "INDICES": "Indices e futuros",
+    "CRYPTO": "Criptomoedas",
 }
 
 
@@ -124,6 +129,8 @@ def grouped_availability(
         "MAJORS": [],
         "CROSSES": [],
         "EXOTICS": [],
+        "INDICES": [],
+        "CRYPTO": [],
     }
     for availability in catalog_availability(symbols):
         grouped[availability.instrument.group].append(availability)

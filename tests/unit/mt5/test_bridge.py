@@ -1,7 +1,7 @@
 """Ponte para o MetaTrader sob Wine.
 
 O projeto inteiro assumia que o terminal so era alcancavel de uma maquina
-Windows. Com o mt5-wine em Docker isso deixa de valer, e a ponte e o que
+Windows. Com uma ponte externa isso deixa de valer, e a ponte e o que
 transforma essa premissa em configuracao.
 
 O que estes testes protegem: que o modulo remoto entre no lugar do local

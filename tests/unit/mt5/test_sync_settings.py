@@ -27,6 +27,9 @@ def test_sync_config_defaults_to_nine_timeframes_and_xauusd(db_session) -> None:
     config = load_sync_config(db_session)
 
     assert "XAUUSD" in config.symbols
+    assert "MNQU6" in config.symbols
+    assert "USTEC" in config.symbols
+    assert "BTCUSD" in config.symbols
     assert config.timeframes == ("MN1", "W1", "D1", "H4", "H1", "M30", "M15", "M5", "M1")
     assert config.enabled is False
 

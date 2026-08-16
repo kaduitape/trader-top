@@ -1,6 +1,6 @@
 """Ponte para um MetaTrader 5 rodando sob Wine, em outro container.
 
-## O que muda com o mt5-wine
+## Ponte externa
 
 O projeto inteiro assumia uma coisa: `MetaTrader5` so existe para Windows,
 logo o terminal so pode ser alcancado de uma maquina Windows. Por isso o

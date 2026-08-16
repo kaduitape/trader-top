@@ -23,7 +23,7 @@ MT5_SYNC_CONFIG_KEY = "mt5_auto_sync_config"
 MT5_SYNC_STATUS_KEY = "mt5_auto_sync_status"
 
 _CATALOG_CODES = frozenset(instrument.code for instrument in MARKET_CATALOG)
-_DEFAULT_SYMBOLS = ("XAUUSD", "EURUSD", "GBPUSD", "USDJPY")
+_DEFAULT_SYMBOLS = ("XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "MNQU6", "USTEC", "BTCUSD")
 _DEFAULT_TIMEFRAMES = ("MN1", "W1", "D1", "H4", "H1", "M30", "M15", "M5", "M1")
 _TIMEFRAME_CODES = frozenset(_DEFAULT_TIMEFRAMES)
 

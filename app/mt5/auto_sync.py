@@ -605,14 +605,6 @@ class MT5AutoSyncWorker:
             and config.sync_request_id != status.handled_sync_request_id
         )
 
-        if not config.enabled and not test_pending:
-            self._disconnect()
-            status = self._publish(
-                replace(status, state="PAUSED", connected=False, last_error=None)
-            )
-            self._stop.wait(5)
-            return
-
         status = self._publish(replace(status, state="CONNECTING", last_error=None))
         connection = self._ensure_connection()
         if connection is None:
@@ -623,7 +615,7 @@ class MT5AutoSyncWorker:
                     connected=False,
                     last_error=(
                         "Nao foi possivel conectar ao terminal MT5. "
-                        "Confirme se ele esta aberto e autenticado no Windows."
+                        "Confirme se ele esta aberto, autenticado e acessivel."
                     ),
                     handled_test_request_id=(
                         config.test_request_id if test_pending else status.handled_test_request_id
@@ -634,9 +626,19 @@ class MT5AutoSyncWorker:
             return
 
         status = self._terminal_status(status, connection, state="ONLINE")
+        if not config.enabled and not test_pending:
+            # Pausar a sincronizacao nao torna o terminal desconectado. O
+            # conector continua mantendo a sessao e publicando heartbeat para
+            # que todas as telas mostrem a conectividade real com o MT5.
+            self._publish(
+                replace(status, state="PAUSED", connected=True, last_error=None)
+            )
+            self._stop.wait(5)
+            return
+
         if test_pending:
-            # O painel nao consegue falar com o terminal (Linux, sem a
-            # biblioteca). Quem executa o teste de credencial e este worker.
+            # O conector executa o teste no mesmo cliente persistente usado
+            # para sincronizacao e operacao.
             self._run_credential_test(connection.client)
             status = replace(
                 status,

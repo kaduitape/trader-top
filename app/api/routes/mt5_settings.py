@@ -249,7 +249,7 @@ def mt5_test(
             detail="nenhuma credencial MT5 cadastrada.",
         )
 
-    # Com a ponte configurada (mt5-wine em Docker), o terminal e alcancavel
+    # Com uma ponte externa configurada, o terminal e alcancavel
     # daqui mesmo: nao ha motivo para delegar nem para exigir o worker.
     settings = get_settings()
     if getattr(settings, "mt5_bridge_host", None):

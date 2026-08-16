@@ -32,6 +32,7 @@ jobs:
             docker/entrypoint.sh,
             main.py,
             alembic.ini,
+            pyproject.toml,
             Dockerfile,
             docker-compose.yml,
             .dockerignore,
@@ -54,7 +55,7 @@ jobs:
 
             test -f .env
             docker compose config --quiet
-            docker compose build app
+            docker compose build app connector
             docker compose up -d db
 
             for attempt in $(seq 1 30); do
@@ -78,10 +79,5 @@ jobs:
 
             curl -fsS --max-time 10 http://127.0.0.1:8000/health
             echo
-            docker compose ps app db
-
-            if docker ps -a --filter label=com.docker.compose.project=trader-top --format '{{.Names}}' \
-              | grep -Eq '^trader-top-(mt5-wine|mt5-worker)-'; then
-              echo "Erro: a pipeline nao deve criar MT5/Wine nem worker." >&2
-              exit 1
-            fi
+            docker compose up -d connector
+            docker compose ps app connector db

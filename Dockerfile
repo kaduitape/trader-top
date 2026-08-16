@@ -1,13 +1,7 @@
 # Imagem Linux para a API/dashboard/CLI (backtest, ML, monitor, preflight).
 #
-# NAO inclui o pacote `MetaTrader5` (extra opcional "mt5" no pyproject.toml):
-# esse pacote so publica wheel para Windows, porque fala com o terminal MT5
-# via DLL/named pipe -- nao existe (nem pode existir) uma versao Linux dele.
-# Consequencia pratica: comandos que dependem de conexao real ao MetaTrader
-# (`mt5 check`, `collect candles`/`collect ticks`, `paper run`, `demo run`)
-# NAO funcionam dentro deste container -- rode-os no host Windows, com um
-# terminal MT5 instalado e autenticado, apontando DB_HOST para o MySQL deste
-# compose. Ver docs/runbook.md.
+# O pacote oficial `MetaTrader5` continua restrito ao Windows. No Linux, o
+# app e o conector usam `mt5linux` para acessar um terminal externo por RPyC.
 FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

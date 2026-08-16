@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     mt5_password: str | None = None
     mt5_server: str | None = None
     mt5_bridge_host: str | None = None
-    """Host da ponte para um MetaTrader sob Wine (mt5-wine em Docker).
+    """Host de uma ponte externa para o MetaTrader.
 
     Preenchido, o sistema fala com o terminal a partir do Linux e o worker
     Windows deixa de ser necessario. Vazio, mantem o comportamento antigo:
