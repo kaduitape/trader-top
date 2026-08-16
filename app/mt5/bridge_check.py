@@ -78,22 +78,39 @@ _CANDIDATOS = (
 )
 
 
-def suggest_hosts(port: int, *, timeout: float = 1.5, skip: str = "") -> list[str]:
-    """Nomes alcancaveis nesta porta, entre os candidatos conhecidos.
+# Portas conhecidas de ponte RPyC. Nao ha um padrao: `mt5linux` documenta
+# 18812, e a imagem `gmag11/metatrader5_vnc` — a mais usada para rodar o
+# terminal sob Wine com noVNC — publica o mesmo servidor em 8001. Sondar as
+# duas evita que "porta errada" se disfarce de "container ausente", que foi
+# exatamente o que aconteceu em producao.
+_PORTAS_CONHECIDAS = (18812, 8001)
+
+
+def suggest_hosts(
+    port: int, *, timeout: float = 1.5, skip: str = ""
+) -> list[tuple[str, int]]:
+    """Pares host:porta alcancaveis, entre os candidatos conhecidos.
 
     Existe porque "o nome nao resolve" nao diz qual nome usar, e quem esta
     olhando o painel nao tem `docker ps` a mao. Um TCP curto contra uma
     lista pequena responde a pergunta que o operador realmente tem.
+
+    Sonda tambem as portas conhecidas alem da configurada: quem errou o
+    nome tem boa chance de ter errado a porta junto, e descobrir so metade
+    do problema faz o proximo teste falhar sem explicar por que.
     """
-    encontrados: list[str] = []
+    portas = list(dict.fromkeys((port, *_PORTAS_CONHECIDAS)))
+    encontrados: list[tuple[str, int]] = []
     for nome in _CANDIDATOS:
         if nome == skip:
             continue
-        try:
-            with socket.create_connection((nome, port), timeout=timeout):
-                encontrados.append(nome)
-        except OSError:
-            continue
+        for porta in portas:
+            try:
+                with socket.create_connection((nome, porta), timeout=timeout):
+                    encontrados.append((nome, porta))
+                    break
+            except OSError:
+                continue
     return encontrados
 
 
@@ -109,10 +126,10 @@ def _check_dns(host: str, port: int = 0) -> Step:
         if port:
             achados = suggest_hosts(port, skip=host)
             if achados:
+                lista = ", ".join(f"{nome}:{porta}" for nome, porta in achados)
                 detalhe += (
-                    f" Respondem na porta {port} a partir daqui: "
-                    f"{', '.join(achados)} — use um desses no campo "
-                    "'Host da ponte'."
+                    f" Respondem a partir daqui: {lista} — use um desses nos "
+                    "campos 'Host da ponte' e 'Porta da ponte'."
                 )
             else:
                 detalhe += (

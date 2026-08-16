@@ -65,6 +65,16 @@ Em **Configurações → Conexão MetaTrader 5**:
 Com o host preenchido, o botão **Testar conexão** roda no próprio painel:
 não exige o worker Windows.
 
+#### A porta não é sempre 18812
+
+Não existe padrão. `mt5linux` documenta **18812**; a imagem
+`gmag11/metatrader5_vnc` — a mais usada para rodar o terminal sob Wine com
+noVNC — publica o mesmo servidor RPyC em **8001**, e o 3000 é só a tela.
+
+Confira com `docker ps` qual porta o seu container expõe. O diagnóstico
+sonda as duas conhecidas, então "porta errada" não se disfarça de
+"container ausente".
+
 #### Os dois containers precisam se enxergar
 
 O nome do container só resolve para quem está na **mesma rede Docker**. Se
@@ -78,6 +88,11 @@ padrão. Duas saídas:
    ```
 
    Confira os nomes com `docker network ls` e `docker ps`.
+
+   **Esta direção, e não a inversa.** O deploy recria o container `app`, e
+   toda rede anexada por fora do compose se perde nessa hora. O container
+   do MetaTrader não é recriado pelo deploy do painel — então ligá-lo à
+   rede do painel sobrevive às atualizações; o contrário, não.
 
 2. Se o container do MT5 publica a 18812 no host (`127.0.0.1:18812`), use
    `host.docker.internal` como host da ponte — o `docker-compose.yml` do

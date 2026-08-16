@@ -197,7 +197,7 @@ def test_a_failed_name_offers_reachable_candidates(monkeypatch) -> None:
     passo = bridge_check._check_dns("mt5-wine", 18812)
 
     assert passo.ok is False
-    assert "mt5" in passo.detail
+    assert "mt5:18812" in passo.detail
     assert "Host da ponte" in passo.detail
 
 
@@ -239,3 +239,33 @@ class _Fechavel:
 
     def __exit__(self, *exc):
         return None
+
+
+def test_the_probe_also_tries_the_other_known_port(monkeypatch) -> None:
+    """A imagem mais usada para MetaTrader sob Wine publica a ponte em 8001,
+    nao em 18812. Quem errou o nome costuma ter errado a porta junto, e
+    achar so metade faz o proximo teste falhar sem explicar por que."""
+
+    def conecta(endereco, timeout=None):
+        if endereco == ("mt5", 8001):
+            return _Fechavel()
+        raise OSError("recusado")
+
+    monkeypatch.setattr(socket, "create_connection", conecta)
+
+    assert bridge_check.suggest_hosts(18812) == [("mt5", 8001)]
+
+
+def test_the_probe_stops_at_the_first_port_that_answers(monkeypatch) -> None:
+    """Um host so precisa aparecer uma vez na sugestao."""
+
+    def aceita(endereco, timeout=None):
+        return _Fechavel()
+
+    monkeypatch.setattr(socket, "create_connection", aceita)
+
+    achados = bridge_check.suggest_hosts(18812)
+    nomes = [nome for nome, _ in achados]
+
+    assert len(nomes) == len(set(nomes))
+    assert all(porta == 18812 for _, porta in achados)
