@@ -94,9 +94,20 @@ def connect_bridge(
             f"e, se ele subiu por outro compose, ligue-o a esta rede com "
             f"`docker network connect trader-top_default <container>`."
         ) from exc
+    except ConnectionRefusedError as exc:
+        # Recusa ATIVA e informacao valiosa: o container respondeu, entao ele
+        # esta de pe e alcancavel. O que falta e um processo escutando —
+        # diferente de container parado, que daria timeout ou host inacessivel.
+        raise BridgeError(
+            f"O container respondeu em {host}, mas nada escuta na porta "
+            f"{port}. O servidor RPyC ainda nao subiu: imagens como a "
+            f"`gmag11/metatrader5_vnc` so o iniciam no ULTIMO passo, depois "
+            f"de instalar MetaTrader, Wine e Python — o que leva vários "
+            f"minutos na primeira execucao e pode ter falhado. Veja "
+            f"`docker logs <container>` e confirme a porta com "
+            f"`docker exec <container> ss -ltn`."
+        ) from exc
     except OSError as exc:
-        # Recusa de conexao e o erro mais comum e o mais mal explicado por
-        # padrao: quase sempre e o container parado ou a porta errada.
         raise BridgeError(
             f"Nao foi possivel conectar em {host}:{port} — confira se o "
             f"container do MetaTrader esta rodando e se a porta da ponte "

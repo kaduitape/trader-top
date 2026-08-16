@@ -68,16 +68,29 @@ def test_the_default_port_matches_the_common_image() -> None:
     assert DEFAULT_BRIDGE_PORT == 18812
 
 
-def test_a_refused_connection_says_what_to_check(monkeypatch) -> None:
-    """E o erro mais comum e o pior explicado por padrao."""
+def test_a_refused_connection_says_nothing_is_listening(monkeypatch) -> None:
+    """Recusa ATIVA nao e container parado — e o oposto: ele respondeu.
+    Tratar os dois com a mesma frase manda procurar no lugar errado, e foi
+    o que aconteceu em producao."""
     _instalar_connect(monkeypatch, ConnectionRefusedError("recusado"))
 
     with pytest.raises(BridgeError) as exc:
         connect_bridge("mt5", 18812)
 
     mensagem = str(exc.value)
-    assert "mt5:18812" in mensagem
-    assert "container" in mensagem
+    assert "18812" in mensagem
+    assert "nada escuta" in mensagem
+    assert "docker logs" in mensagem
+
+
+def test_an_unreachable_host_is_not_described_as_idle(monkeypatch) -> None:
+    """Timeout/host inacessivel continua sendo "container parado"."""
+    _instalar_connect(monkeypatch, TimeoutError("sem resposta"))
+
+    with pytest.raises(BridgeError) as exc:
+        connect_bridge("mt5", 18812)
+
+    assert "nada escuta" not in str(exc.value)
 
 
 def test_a_missing_module_on_the_other_side_is_distinguished(monkeypatch) -> None:
@@ -205,7 +218,7 @@ def test_a_bridge_failure_is_reported_instead_of_missing_library(monkeypatch) ->
     )
 
     assert resultado.success is False
-    assert "container" in resultado.message
+    assert "nada escuta" in resultado.message
     assert "nao instalada" not in resultado.message
 
 
