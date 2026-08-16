@@ -169,6 +169,44 @@ def _print_issues(issues: list[DataQualityIssue]) -> None:
         print(f"  [{issue.severity.value}] {issue.check}: {issue.message}", file=sys.stderr)
 
 
+def cmd_mt5_bridge(args: argparse.Namespace) -> int:
+    """Diagnostica a ponte com o MetaTrader sob Wine, passo a passo.
+
+    "Nao conecta" nao e diagnostico. Entre o painel e o terminal ha seis
+    coisas que podem estar erradas, cada uma com uma correcao diferente —
+    este comando diz QUAL delas.
+    """
+    from app.mt5.bridge import DEFAULT_BRIDGE_PORT
+    from app.mt5.bridge_check import check_bridge
+
+    settings = get_settings()
+    host = args.host or getattr(settings, "mt5_bridge_host", None)
+    porta = args.port or int(
+        getattr(settings, "mt5_bridge_port", DEFAULT_BRIDGE_PORT)
+    )
+
+    if not host:
+        print(
+            "Nenhuma ponte configurada. Defina MT5_BRIDGE_HOST no .env ou "
+            "passe --host.",
+            file=sys.stderr,
+        )
+        return 1
+
+    relatorio = check_bridge(host, porta, timeout=args.timeout)
+    print(f"\nPonte MetaTrader — {host}:{porta}\n")
+    for passo in relatorio.steps:
+        print(f"  [{passo.icon}] {passo.name}: {passo.detail}")
+
+    if relatorio.ok:
+        print("\nPonte funcionando. O painel consegue falar com o terminal.")
+        return 0
+
+    falha = relatorio.first_failure
+    print(f"\nParou em: {falha.name}" if falha else "\nFalhou.")
+    return 1
+
+
 def cmd_mt5_check(_args: argparse.Namespace) -> int:
     settings = get_settings()
     config = MT5ConnectionConfig.from_settings(settings)
@@ -2476,6 +2514,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     mt5_subparsers.add_parser("check", help="Conecta e reporta saude do terminal/conta")
 
+    bridge_parser = mt5_subparsers.add_parser(
+        "bridge", help="Diagnostica a ponte com o MetaTrader sob Wine/Docker"
+    )
+    bridge_parser.add_argument("--host", default=None, help="Padrao: MT5_BRIDGE_HOST")
+    bridge_parser.add_argument("--port", type=int, default=None, help="Padrao: 18812")
+    bridge_parser.add_argument("--timeout", type=float, default=10.0)
+    bridge_parser.set_defaults(func=cmd_mt5_bridge)
+
     symbols_parser = mt5_subparsers.add_parser("symbols", help="Lista simbolos disponiveis")
     symbols_parser.add_argument("--group", default=None, help="Filtro de grupo (ex.: '*USD*')")
     symbols_parser.add_argument("--limit", type=int, default=50)
@@ -3158,6 +3204,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_mt5_check(args)
         if args.mt5_command == "symbols":
             return cmd_mt5_symbols(args)
+        if args.mt5_command == "bridge":
+            return cmd_mt5_bridge(args)
 
     if args.command == "collect":
         if args.collect_command == "candles":

@@ -71,8 +71,10 @@ services:
       APP_PORT: 8000
       SYSTEM_MODE: DISABLED
       DASHBOARD_AUTH_DISABLED: ${DASHBOARD_AUTH_DISABLED:-false}
-      MT5_BRIDGE_HOST: mt5-wine
-      MT5_BRIDGE_PORT: 18812
+      # Padrao aponta para o servico deste compose. O valor salvo no painel
+      # tem precedencia sobre isto (ver app/mt5/bridge.py::resolve_target).
+      MT5_BRIDGE_HOST: ${MT5_BRIDGE_HOST:-mt5-wine}
+      MT5_BRIDGE_PORT: ${MT5_BRIDGE_PORT:-18812}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-}
@@ -92,9 +94,17 @@ services:
       QUALITY_MAX_FEED_DELAY_SECONDS: ${QUALITY_MAX_FEED_DELAY_SECONDS:-300}
       ANALYSIS_DEFAULT_TIMEFRAME: ${ANALYSIS_DEFAULT_TIMEFRAME:-M15}
       ANALYSIS_DEFAULT_THRESHOLD: ${ANALYSIS_DEFAULT_THRESHOLD:-90.0}
+      # Sem isto, o container cai no APP_SECRET_KEY para cifrar credenciais —
+      # e trocar o secret de sessao tornaria a senha do MT5 indecifravel.
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
       AISA_API_KEY: ${AISA_API_KEY:-}
       AISA_API_BASE_URL: ${AISA_API_BASE_URL:-}
       RUN_PREFLIGHT: ${RUN_PREFLIGHT:-true}
+    extra_hosts:
+      # Permite apontar a ponte do MetaTrader para `host.docker.internal`
+      # quando o container do MT5 vive em outro projeto compose e publica a
+      # porta 18812 no host. Sem isto, esse nome nao resolve no Linux.
+      - "host.docker.internal:host-gateway"
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
@@ -141,8 +151,11 @@ services:
       LOG_DIR: /app/logs
       ML_MODELS_DIR: /app/models
       ML_DATASETS_DIR: /app/datasets
-      MT5_BRIDGE_HOST: mt5-wine
-      MT5_BRIDGE_PORT: 18812
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
+      # Padrao aponta para o servico deste compose. O valor salvo no painel
+      # tem precedencia sobre isto (ver app/mt5/bridge.py::resolve_target).
+      MT5_BRIDGE_HOST: ${MT5_BRIDGE_HOST:-mt5-wine}
+      MT5_BRIDGE_PORT: ${MT5_BRIDGE_PORT:-18812}
       RUN_PREFLIGHT: "false"
     command:
       [

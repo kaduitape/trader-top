@@ -71,7 +71,9 @@ def test_connect_omits_login_password_server_when_not_configured() -> None:
     assert "login" not in client.last_kwargs
     assert "password" not in client.last_kwargs
     assert "server" not in client.last_kwargs
-    assert client.last_kwargs["path"] is None
+    # `path` segue a mesma regra dos outros: sem valor, o kwarg some. Passar
+    # `path=None` explicito nao e neutro para a API real do MetaTrader5.
+    assert "path" not in client.last_kwargs
     assert client.last_kwargs["timeout"] == 1000
 
 

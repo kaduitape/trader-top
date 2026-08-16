@@ -90,7 +90,7 @@ from app.market.scan_settings import (
     save_observation_config,
 )
 from app.ml.registry import ModelRegistry
-from app.mt5.bridge import describe_target
+from app.mt5.bridge import describe_target, resolve_target
 from app.mt5.market_data import Timeframe
 from app.mt5.sync_settings import (
     heartbeat_age_label,
@@ -1661,6 +1661,8 @@ def dashboard_settings_hub(
     calendario = get_calendar_provider(settings).fetch_events(
         now=datetime.now(UTC), horizon_minutes=120
     )
+    credencial_mt5 = Mt5CredentialRepository(db).get_active()
+    mt5_bridge_host, mt5_bridge_port = resolve_target(credencial_mt5, settings)
 
     return templates.TemplateResponse(
         request,
@@ -1681,12 +1683,15 @@ def dashboard_settings_hub(
             "broker": settings.broker,
             "calendar_file": settings.calendar_file_path or "",
             "calendar_policy": load_calendar_policy(db, settings),
-            "mt5_credential": Mt5CredentialRepository(db).get_active(),
+            "mt5_credential": credencial_mt5,
             "mt5_password_mask": MASK,
-            "mt5_bridge": describe_target(
-                settings.mt5_bridge_host, settings.mt5_bridge_port
+            "mt5_bridge": describe_target(mt5_bridge_host, mt5_bridge_port),
+            "mt5_bridge_on": bool(mt5_bridge_host),
+            "mt5_bridge_host": mt5_bridge_host or "",
+            "mt5_bridge_port": mt5_bridge_port,
+            "mt5_bridge_from_env": bool(
+                mt5_bridge_host and not (credencial_mt5 and credencial_mt5.bridge_host)
             ),
-            "mt5_bridge_on": bool(settings.mt5_bridge_host),
             "impacts": IMPACTS,
             "saved": saved,
             "error": error,
@@ -1703,9 +1708,35 @@ def dashboard_mt5_credentials_save(
     account_type: str = Form("DEMO"),
     terminal_path: str = Form(""),
     password: str = Form(""),
+    bridge_host: str = Form(""),
+    bridge_port: str = Form(""),
 ) -> RedirectResponse:
-    """Cadastra/edita a conta MT5. Senha em branco MANTEM a atual."""
+    """Cadastra/edita a conta MT5. Senha em branco MANTEM a atual.
+
+    `bridge_port` chega como texto de proposito: um `int` no formulario faz
+    o campo vazio virar erro 422 do FastAPI, e "vazio" e a resposta normal
+    de quem roda no Windows sem ponte.
+    """
+    from app.mt5.bridge import DEFAULT_BRIDGE_PORT
+
     repo = Mt5CredentialRepository(db)
+    porta = DEFAULT_BRIDGE_PORT
+    if bridge_port.strip():
+        try:
+            porta = int(bridge_port)
+        except ValueError:
+            return RedirectResponse(
+                url="/dashboard/settings?error="
+                + quote("porta da ponte precisa ser um numero."),
+                status_code=303,
+            )
+        if not 1 <= porta <= 65535:
+            return RedirectResponse(
+                url="/dashboard/settings?error="
+                + quote("porta da ponte fora da faixa (1-65535)."),
+                status_code=303,
+            )
+
     try:
         repo.save(
             login=login,
@@ -1713,6 +1744,8 @@ def dashboard_mt5_credentials_save(
             account_type=account_type,
             terminal_path=terminal_path,
             password=password or None,
+            bridge_host=bridge_host,
+            bridge_port=porta if bridge_host.strip() else None,
         )
     except ValueError as exc:
         db.rollback()
@@ -1776,6 +1809,45 @@ def dashboard_mt5_diagnose(
         )
     return RedirectResponse(
         url="/dashboard/settings?saved=" + quote(" | ".join(linhas)[:1200]),
+        status_code=303,
+    )
+
+
+@router.post("/dashboard/settings/mt5/bridge-check")
+def dashboard_mt5_bridge_check(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Por que a ponte nao conecta — passo a passo, sem tocar em credencial.
+
+    "Nao conecta" nao e diagnostico: entre o painel e o terminal ha seis
+    coisas que podem estar erradas, com seis correcoes diferentes. Este
+    botao diz QUAL delas, e por isso e separado do "Testar conexao" — que
+    so faz sentido depois que a ponte responde.
+    """
+    del user
+    from app.mt5.bridge_check import check_bridge
+
+    credencial = Mt5CredentialRepository(db).get_active()
+    host, porta = resolve_target(credencial, get_settings())
+    if not host:
+        return RedirectResponse(
+            url="/dashboard/settings?error="
+            + quote(
+                "Nenhuma ponte configurada. Preencha 'Host da ponte' se o "
+                "MetaTrader roda sob Wine em outro container."
+            ),
+            status_code=303,
+        )
+
+    relatorio = check_bridge(host, porta, timeout=10.0)
+    linhas = [f"Ponte {host}:{porta}"] + [
+        f"[{passo.icon.strip()}] {passo.name}: {passo.detail}"
+        for passo in relatorio.steps
+    ]
+    campo = "saved" if relatorio.ok else "error"
+    return RedirectResponse(
+        url=f"/dashboard/settings?{campo}=" + quote(" | ".join(linhas)[:1500]),
         status_code=303,
     )
 

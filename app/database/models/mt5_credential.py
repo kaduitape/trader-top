@@ -49,6 +49,17 @@ class Mt5Credential(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     """Preparado para varias contas. Hoje so uma fica ativa por vez."""
 
+    # --- onde o terminal esta -------------------------------------------
+    #
+    # Endereco da ponte RPyC quando o MetaTrader roda sob Wine em outro
+    # container. Vazio = comportamento antigo (pacote `MetaTrader5` local,
+    # so no Windows). Fica AQUI, e nao so no `.env`, porque "com qual
+    # terminal eu falo" e a mesma decisao que login/senha/servidor —
+    # dividi-la entre banco e ambiente e o que produz "salvei no painel e
+    # nao mudou nada".
+    bridge_host: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    bridge_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # --- resultado do ultimo teste ---------------------------------------
     #
     # `last_test_at` e `last_success_at` sao campos DIFERENTES de proposito.

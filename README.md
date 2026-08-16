@@ -799,6 +799,9 @@ para as fases correspondentes.
 - `docs/runbook.md` — procedimentos operacionais práticos: instalação,
   rotina de operação, checagens periódicas e resposta a incidentes
   (Fase 15).
+- `docs/mt5-bridge.md` — ponte RPyC para um MetaTrader sob Wine em
+  container: quando usar, como configurar pelo painel, por que a porta
+  18812 nunca vai para a internet e o diagnóstico de seis passos.
 - `docs/autopilot.md` — piloto automático: sessões de negociação, perfil de
   volume por hora, seleção de operacional e status ao vivo.
 - `docs/apexflow.md` — motor ApexFlow AI: fluxo de ticks, contexto de
