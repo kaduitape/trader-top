@@ -3,6 +3,10 @@ services:
   # somente na rede interna do Compose; a interface noVNC e limitada ao host
   # para o primeiro login/manual de diagnostico em http://localhost:8081.
   mt5-wine:
+    # Opcional: so sobe com `--profile local-mt5`. Quem ja tem um container
+    # de MetaTrader rodando (outro compose, outra VPS) nao quer um segundo
+    # terminal competindo pela mesma conta na corretora.
+    profiles: ["local-mt5"]
     build:
       context: .
       dockerfile: docker/mt5-wine.Dockerfile
@@ -13,7 +17,9 @@ services:
       MT5_LOGIN: ${MT5_LOGIN:-}
       MT5_PASSWORD: ${MT5_PASSWORD:-}
       MT5_SERVER: ${MT5_SERVER:-}
-      VNC_PASSWORD: ${MT5_VNC_PASSWORD:?defina MT5_VNC_PASSWORD no .env}
+      # Sem `:?` de proposito: a interpolacao roda mesmo com o profile
+      # desligado, e derrubaria o compose de quem nao usa este servico.
+      VNC_PASSWORD: ${MT5_VNC_PASSWORD:-}
       NOVNC_HOST: localhost
     ports:
       - "127.0.0.1:${MT5_VNC_PORT:-8081}:8080"
@@ -62,8 +68,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      mt5-wine:
-          condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
       APP_SECRET_KEY: ${APP_SECRET_KEY:?defina APP_SECRET_KEY no .env}
@@ -71,9 +75,11 @@ services:
       APP_PORT: 8000
       SYSTEM_MODE: DISABLED
       DASHBOARD_AUTH_DISABLED: ${DASHBOARD_AUTH_DISABLED:-false}
-      # Padrao aponta para o servico deste compose. O valor salvo no painel
-      # tem precedencia sobre isto (ver app/mt5/bridge.py::resolve_target).
-      MT5_BRIDGE_HOST: ${MT5_BRIDGE_HOST:-mt5-wine}
+      # Vazio de proposito: aponte a ponte pelo painel (Configuracoes ->
+      # Conexao MetaTrader 5), que tem precedencia sobre esta variavel.
+      # Um padrao fixo aqui viraria um nome que nao resolve, e o erro
+      # resultante culparia a rede em vez da configuracao ausente.
+      MT5_BRIDGE_HOST: ${MT5_BRIDGE_HOST:-}
       MT5_BRIDGE_PORT: ${MT5_BRIDGE_PORT:-18812}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
@@ -100,6 +106,9 @@ services:
       AISA_API_KEY: ${AISA_API_KEY:-}
       AISA_API_BASE_URL: ${AISA_API_BASE_URL:-}
       RUN_PREFLIGHT: ${RUN_PREFLIGHT:-true}
+    networks:
+      - default
+      - mt5
     extra_hosts:
       # Permite apontar a ponte do MetaTrader para `host.docker.internal`
       # quando o container do MT5 vive em outro projeto compose e publica a
@@ -129,6 +138,9 @@ services:
   # concluiu as migrations e esta saudavel, evitando duas inicializacoes do
   # banco durante o boot.
   mt5-worker:
+    # Mesma regra do mt5-wine: parte do arranjo "terminal local", nao do
+    # arranjo "terminal em outro container".
+    profiles: ["local-mt5"]
     build: .
     restart: unless-stopped
     init: true
@@ -152,9 +164,11 @@ services:
       ML_MODELS_DIR: /app/models
       ML_DATASETS_DIR: /app/datasets
       CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
-      # Padrao aponta para o servico deste compose. O valor salvo no painel
-      # tem precedencia sobre isto (ver app/mt5/bridge.py::resolve_target).
-      MT5_BRIDGE_HOST: ${MT5_BRIDGE_HOST:-mt5-wine}
+      # Vazio de proposito: aponte a ponte pelo painel (Configuracoes ->
+      # Conexao MetaTrader 5), que tem precedencia sobre esta variavel.
+      # Um padrao fixo aqui viraria um nome que nao resolve, e o erro
+      # resultante culparia a rede em vez da configuracao ausente.
+      MT5_BRIDGE_HOST: ${MT5_BRIDGE_HOST:-}
       MT5_BRIDGE_PORT: ${MT5_BRIDGE_PORT:-18812}
       RUN_PREFLIGHT: "false"
     command:
@@ -168,6 +182,17 @@ services:
       - ./models:/app/models
       - ./datasets:/app/datasets
     stop_grace_period: 20s
+
+networks:
+  default:
+  mt5:
+    # Rede onde vive o container do MetaTrader. Aponte MT5_NETWORK para ela
+    # no `.env` (ex.: metatrader-5-9p2b_default) e o painel passa a enxergar
+    # o terminal por nome, de forma duravel: o deploy recria o `app`, e uma
+    # rede anexada a mao com `docker network connect` se perderia ai.
+    # O padrao `bridge` existe em qualquer host Docker e nao muda nada.
+    external: true
+    name: ${MT5_NETWORK:-bridge}
 
 volumes:
   mysql_data:

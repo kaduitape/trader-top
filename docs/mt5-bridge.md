@@ -42,28 +42,46 @@ não é a ponte e não serve como host aqui.
 
 ## Configurando
 
-### Caso normal: tudo no mesmo `docker-compose.yml`
+### Terminal em outro container (o caso comum)
 
-Não há nada a fazer. O serviço `mt5-wine` está no mesmo Compose e o painel
-já sobe com `MT5_BRIDGE_HOST=mt5-wine`. Deixe os campos de ponte **em
-branco** no painel; preencha só login, senha e servidor.
+O `docker compose up` padrão sobe **só `db` e `app`**. Os serviços
+`mt5-wine` e `mt5-worker` são opcionais e ficam atrás do profile
+`local-mt5` — quem já tem um container de MetaTrader rodando não quer um
+segundo terminal disputando a mesma conta na corretora.
 
-O que está salvo no painel tem precedência sobre `MT5_BRIDGE_HOST`. Isso
-existe para o caso abaixo — e para que "salvei na tela e não mudou nada"
-nunca aconteça.
+Dois passos, e o primeiro é de rede.
 
-### Caso do MetaTrader em outro container
+**1. Ponha o painel na rede do MetaTrader.** No `.env`:
 
-Em **Configurações → Conexão MetaTrader 5**:
+```ini
+MT5_NETWORK=metatrader-5-9p2b_default    # veja com `docker network ls`
+```
+
+Isso é duradouro: o deploy recria o container `app`, e uma rede anexada à
+mão com `docker network connect` se perderia exatamente aí. Com
+`MT5_NETWORK`, o Compose reanexa a cada subida.
+
+**2. Aponte a ponte** em **Configurações → Conexão MetaTrader 5**:
 
 | Campo | Valor |
 |---|---|
-| Host da ponte | nome do **container** do MetaTrader (ex.: `mt5`, `mt5-wine`) |
-| Porta da ponte | `18812` |
+| Host da ponte | nome do **container** do MetaTrader (`docker ps`) |
+| Porta da ponte | a porta RPyC daquela imagem — ver abaixo |
 | Login / Senha / Servidor | os da conta na corretora |
+
+O que está salvo no painel tem precedência sobre `MT5_BRIDGE_HOST` do
+`.env`, para que "salvei na tela e não mudou nada" nunca aconteça.
 
 Com o host preenchido, o botão **Testar conexão** roda no próprio painel:
 não exige o worker Windows.
+
+### Usando o profile local (terminal sob Wine neste compose)
+
+```bash
+docker compose --profile local-mt5 up -d
+```
+
+Aí o host da ponte é `mt5-wine` e a porta `18812`.
 
 #### A porta não é sempre 18812
 
