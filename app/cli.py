@@ -77,6 +77,7 @@ from app.database.models.candle import Candle
 from app.database.repositories.apexflow_decision_repository import (
     ApexFlowDecisionRepository,
 )
+from app.database.repositories.audit_log_repository import AuditLogRepository
 from app.database.repositories.candle_repository import CandleRepository
 from app.database.repositories.data_quality_repository import DataQualityEventRepository
 from app.database.repositories.drift_event_repository import DriftEventRepository
@@ -167,6 +168,157 @@ def _print_json(payload: object) -> None:
 def _print_issues(issues: list[DataQualityIssue]) -> None:
     for issue in issues:
         print(f"  [{issue.severity.value}] {issue.check}: {issue.message}", file=sys.stderr)
+
+
+def _senha_interativa() -> str | None:
+    """Le a senha do terminal, duas vezes, sem ecoar.
+
+    A senha NUNCA e argumento de linha de comando. Argumento aparece no
+    historico do shell, no `ps` de qualquer usuario da maquina e no log de
+    quem gravou a sessao — e isso vale ainda mais aqui, onde o comando roda
+    numa VPS compartilhada com o terminal da corretora.
+    """
+    import getpass
+
+    try:
+        senha = getpass.getpass("Nova senha: ")
+        confirmacao = getpass.getpass("Repita a nova senha: ")
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelado.", file=sys.stderr)
+        return None
+
+    if senha != confirmacao:
+        print("ERRO: as senhas nao conferem.", file=sys.stderr)
+        return None
+    if len(senha) < 8:
+        print("ERRO: use ao menos 8 caracteres.", file=sys.stderr)
+        return None
+    return senha
+
+
+def cmd_user_list(_args: argparse.Namespace) -> int:
+    """Quem existe, com papel e estado.
+
+    E o primeiro passo de "nao consigo entrar": a causa pode ser senha
+    errada, mas tambem usuario inativo, nome diferente do lembrado, ou
+    nenhum usuario cadastrado — e sao quatro correcoes diferentes.
+    """
+    from app.database.models.user import User
+
+    session = get_session_factory()()
+    try:
+        usuarios = session.query(User).order_by(User.id).all()
+        if not usuarios:
+            print(
+                "Nenhum usuario cadastrado. Crie um com:\n"
+                "  python -m app.cli user create --username admin --email voce@exemplo.com --admin"
+            )
+            return 0
+
+        print(f"\n{'ID':>4}  {'USUARIO':<20} {'EMAIL':<32} {'ESTADO':<8} PAPEIS")
+        for usuario in usuarios:
+            papeis = ", ".join(papel.name for papel in usuario.roles) or "—"
+            estado = "ativo" if usuario.is_active else "INATIVO"
+            print(
+                f"{usuario.id:>4}  {usuario.username:<20} {usuario.email:<32} "
+                f"{estado:<8} {papeis}"
+            )
+        print()
+        return 0
+    finally:
+        session.close()
+
+
+def cmd_user_reset_password(args: argparse.Namespace) -> int:
+    """Redefine a senha de um usuario. So a partir do servidor."""
+    from app.core.security import hash_password
+    from app.database.repositories.user_repository import UserRepository
+
+    session = get_session_factory()()
+    try:
+        repo = UserRepository(session)
+        usuario = repo.get_by_username(args.username)
+        if usuario is None:
+            print(
+                f"ERRO: usuario '{args.username}' nao existe. "
+                "Veja os cadastrados com `python -m app.cli user list`.",
+                file=sys.stderr,
+            )
+            return 1
+
+        senha = _senha_interativa()
+        if senha is None:
+            return 1
+
+        usuario.password_hash = hash_password(senha)
+        del senha
+        if args.activate and not usuario.is_active:
+            usuario.is_active = True
+
+        AuditLogRepository(session).record(
+            user_id=usuario.id,
+            action="password_reset",
+            entity="user",
+            # Registra QUE mudou, nunca para qual valor.
+            detail=f"senha redefinida via CLI para {usuario.username}",
+        )
+        session.commit()
+        print(f"Senha de '{usuario.username}' redefinida.")
+        if not usuario.is_active:
+            print(
+                "ATENCAO: o usuario esta INATIVO e o login vai continuar "
+                "recusando. Repita com --activate.",
+                file=sys.stderr,
+            )
+        return 0
+    finally:
+        session.close()
+
+
+def cmd_user_create(args: argparse.Namespace) -> int:
+    """Cria um usuario. Necessario quando a tabela esta vazia — nesse caso
+    redefinir senha nao resolve, porque nao ha o que redefinir."""
+    from app.core.security import hash_password
+    from app.database.repositories.user_repository import UserRepository
+
+    session = get_session_factory()()
+    try:
+        repo = UserRepository(session)
+        if repo.get_by_username(args.username) is not None:
+            print(
+                f"ERRO: '{args.username}' ja existe. Para trocar a senha use "
+                "`python -m app.cli user reset-password`.",
+                file=sys.stderr,
+            )
+            return 1
+        if repo.get_by_email(args.email) is not None:
+            print(f"ERRO: e-mail '{args.email}' ja cadastrado.", file=sys.stderr)
+            return 1
+
+        senha = _senha_interativa()
+        if senha is None:
+            return 1
+
+        papeis = [repo.get_or_create_role("ADMIN")] if args.admin else []
+        usuario = repo.create_user(
+            username=args.username,
+            email=args.email,
+            password_hash=hash_password(senha),
+            roles=papeis,
+        )
+        del senha
+        AuditLogRepository(session).record(
+            user_id=usuario.id,
+            action="user_create",
+            entity="user",
+            detail=f"{usuario.username} criado via CLI"
+            + (" com papel ADMIN" if args.admin else ""),
+        )
+        session.commit()
+        print(f"Usuario '{usuario.username}' criado.")
+        return 0
+    finally:
+        session.close()
 
 
 def cmd_mt5_bridge(args: argparse.Namespace) -> int:
@@ -2509,6 +2661,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    user_parser = subparsers.add_parser(
+        "user", help="Usuarios do painel: listar, criar e redefinir senha"
+    )
+    user_subparsers = user_parser.add_subparsers(dest="user_command", required=True)
+
+    user_subparsers.add_parser("list", help="Lista usuarios, papeis e estado")
+
+    reset_parser = user_subparsers.add_parser(
+        "reset-password", help="Redefine a senha de um usuario (senha pedida no terminal)"
+    )
+    reset_parser.add_argument("--username", required=True)
+    reset_parser.add_argument(
+        "--activate",
+        action="store_true",
+        help="Reativa o usuario se estiver inativo (senha nova nao adianta em conta inativa)",
+    )
+
+    create_parser = user_subparsers.add_parser(
+        "create", help="Cria um usuario (senha pedida no terminal)"
+    )
+    create_parser.add_argument("--username", required=True)
+    create_parser.add_argument("--email", required=True)
+    create_parser.add_argument("--admin", action="store_true", help="Concede o papel ADMIN")
+
     mt5_parser = subparsers.add_parser("mt5", help="Comandos de diagnostico do MetaTrader 5")
     mt5_subparsers = mt5_parser.add_subparsers(dest="mt5_command", required=True)
 
@@ -3198,6 +3374,14 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "user":
+        if args.user_command == "list":
+            return cmd_user_list(args)
+        if args.user_command == "reset-password":
+            return cmd_user_reset_password(args)
+        if args.user_command == "create":
+            return cmd_user_create(args)
 
     if args.command == "mt5":
         if args.mt5_command == "check":

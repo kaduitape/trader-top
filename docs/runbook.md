@@ -163,6 +163,31 @@ encontram um problema, adequados para scripts de monitoramento externo.
 2. Nenhum comando desta CLI tenta reconectar automaticamente ao banco —
    corrija a conexão e rode o comando de novo.
 
+### Não consigo entrar no painel
+
+A tela de login diz "Usuário ou senha inválidos" para quatro causas
+diferentes — de propósito, para não confirmar a um estranho qual usuário
+existe. Do lado do servidor as quatro se separam. No Docker, prefixe os
+comandos com `docker compose exec app`.
+
+1. **Veja o que existe.** `python -m app.cli user list` mostra usuário,
+   e-mail, papéis e se a conta está ativa.
+2. **Tabela vazia** → não há o que redefinir; crie o primeiro admin:
+   `python -m app.cli user create --username admin --email voce@exemplo.com --admin`
+3. **Usuário existe, senha esquecida** →
+   `python -m app.cli user reset-password --username admin`
+4. **Conta inativa** → a senha nova não faz o login voltar sozinha; use
+   `reset-password --username admin --activate`.
+
+A senha é sempre pedida no terminal, nunca passada como argumento:
+argumento aparece no histórico do shell e no `ps` de qualquer usuário da
+máquina. Ela é gravada com hash, e o audit log registra **que** houve
+troca — jamais o valor.
+
+`DASHBOARD_AUTH_DISABLED=true` também abre o painel, mas é bypass de
+desenvolvimento: libera todas as páginas sem login para quem alcançar a
+porta. Nunca deixe ligado numa VPS.
+
 ## 5. Backup e retenção
 
 - **Banco de dados**: sem automação nesta fase — use `mysqldump`
