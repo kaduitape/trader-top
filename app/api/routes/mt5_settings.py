@@ -40,6 +40,7 @@ from app.database.models.user import User
 from app.database.repositories.audit_log_repository import AuditLogRepository
 from app.database.repositories.mt5_credential_repository import Mt5CredentialRepository
 from app.database.session import get_db
+from app.mt5.bridge import describe_target, resolve_target
 from app.mt5.sync_settings import (
     heartbeat_is_fresh,
     load_sync_config,
@@ -63,6 +64,12 @@ class Mt5SettingsIn(BaseModel):
     exigiria redigitar a senha — e senha redigitada com frequencia vira
     senha anotada em papel."""
 
+    bridge_host: str | None = Field(default=None, max_length=200)
+    bridge_port: int | None = Field(default=None, gt=0, le=65535)
+    """Onde esta o terminal quando ele roda sob Wine em outro container.
+    Vazio = pacote `MetaTrader5` local (Windows). Ao contrario da senha,
+    vazio aqui significa apagado, nao "mantenha o que estava"."""
+
 
 class AccountOut(BaseModel):
     login: int
@@ -81,14 +88,22 @@ class Mt5StatusOut(BaseModel):
     """Configuracao validada e sessao ativa sao coisas diferentes. Um teste
     que funcionou ontem nao significa que existe sessao agora."""
 
+    bridge: str = "pacote local (Windows)"
+    """Destino efetivo, ja resolvido entre banco e ambiente. Sai na resposta
+    porque "salvei e nao mudou nada" quase sempre e precedencia invisivel."""
+
 
 def _status_payload(db: Session) -> Mt5StatusOut:
     registro = Mt5CredentialRepository(db).get_active()
     worker = heartbeat_is_fresh(load_sync_status(db))
+    host, porta = resolve_target(registro, get_settings())
     if registro is None:
-        return Mt5StatusOut(configured=False, worker_online=worker)
+        return Mt5StatusOut(
+            configured=False, worker_online=worker, bridge=describe_target(host, porta)
+        )
     return Mt5StatusOut(
         configured=True,
+        bridge=describe_target(host, porta),
         last_test_status=registro.last_test_status,
         last_test_at=registro.last_test_at,
         last_success_at=registro.last_success_at,
@@ -126,6 +141,8 @@ def mt5_save(
             account_type=payload.account_type,
             terminal_path=payload.terminal_path,
             password=payload.password or None,
+            bridge_host=payload.bridge_host,
+            bridge_port=payload.bridge_port,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -181,7 +198,9 @@ def _wait_for_result(
     return None
 
 
-def _test_through_bridge(db: Session, repo, registro, user) -> Mt5TestOut:
+def _test_through_bridge(
+    db: Session, repo, registro, user, host: str, porta: int
+) -> Mt5TestOut:
     """Testa daqui mesmo, pela ponte. A senha so existe em memoria."""
     from app.core.crypto import CredentialCryptoError
     from app.mt5.connection_service import MT5ConnectionService
@@ -193,7 +212,9 @@ def _test_through_bridge(db: Session, repo, registro, user) -> Mt5TestOut:
         db.commit()
         return Mt5TestOut(success=False, message=str(exc))
 
-    resultado = MT5ConnectionService(timeout_seconds=TEST_TIMEOUT_SECONDS).test_connection(
+    resultado = MT5ConnectionService(
+        timeout_seconds=TEST_TIMEOUT_SECONDS, bridge_host=host, bridge_port=porta
+    ).test_connection(
         login=registro.login,
         password=senha,
         server=registro.server,
@@ -251,9 +272,9 @@ def mt5_test(
 
     # Com a ponte configurada (mt5-wine em Docker), o terminal e alcancavel
     # daqui mesmo: nao ha motivo para delegar nem para exigir o worker.
-    settings = get_settings()
-    if getattr(settings, "mt5_bridge_host", None):
-        return _test_through_bridge(db, repo, registro, user)
+    host, porta = resolve_target(registro, get_settings())
+    if host:
+        return _test_through_bridge(db, repo, registro, user, host, porta)
 
     if not heartbeat_is_fresh(load_sync_status(db)):
         # Falha honesta: o teste depende de um processo que nao esta vivo.

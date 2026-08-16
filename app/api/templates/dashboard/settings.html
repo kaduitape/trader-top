@@ -157,6 +157,28 @@
                                 </div>
                             </div>
 
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-8">
+                                    <label for="mt5_bridge_host" class="form-label fw-semibold">
+                                        Host da ponte (MetaTrader em container)
+                                    </label>
+                                    <input type="text" class="form-control" id="mt5_bridge_host" name="bridge_host"
+                                           maxlength="200" placeholder="mt5"
+                                           value="{{ mt5_bridge_host if not mt5_bridge_from_env else '' }}">
+                                    <div class="form-text">
+                                        Nome do <strong>container</strong> do MetaTrader (ex.: <code>mt5</code>,
+                                        <code>mt5-wine</code>) — não a URL do noVNC. Deixe em branco se o
+                                        terminal roda no Windows, ao lado do conector.
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="mt5_bridge_port" class="form-label fw-semibold">Porta da ponte</label>
+                                    <input type="number" class="form-control" id="mt5_bridge_port" name="bridge_port"
+                                           min="1" max="65535" placeholder="18812"
+                                           value="{{ mt5_bridge_port if not mt5_bridge_from_env else '' }}">
+                                </div>
+                            </div>
+
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-save me-2"></i>Salvar configurações
                             </button>
@@ -207,11 +229,17 @@
                             <i class="bi bi-diagram-2"></i>
                             {% if mt5_bridge_on %}
                             <div>
-                                <strong>Ponte ativa:</strong> <code>{{ mt5_bridge }}</code>.
+                                <strong>Ponte ativa:</strong> <code>{{ mt5_bridge }}</code>
+                                {% if mt5_bridge_from_env %}(vinda do <code>.env</code>){% endif %}.
                                 O terminal roda sob Wine em outro container, e o painel fala com
                                 ele direto — <strong>o worker Windows não é necessário</strong>.
                                 O caminho é
                                 <code>painel → RPyC → Python do Wine → MetaTrader5 → terminal</code>.
+                                <div class="mt-2">
+                                    Os dois containers precisam estar na <strong>mesma rede
+                                    Docker</strong> — é o nome do container que resolve, não o
+                                    endereço público da VPS.
+                                </div>
                             </div>
                             {% else %}
                             <div>
@@ -220,12 +248,21 @@
                                 com o terminal instalado e o painel roda em Linux. O botão pede o
                                 teste e espera o conector responder.
                                 <div class="mt-2">
-                                    Usando <strong>mt5-wine em Docker</strong>? Defina
-                                    <code>MT5_BRIDGE_HOST</code> (nome do serviço no compose) e
-                                    <code>MT5_BRIDGE_PORT</code> (padrão 18812) no <code>.env</code>.
+                                    MetaTrader em container na mesma VPS? Preencha o
+                                    <strong>host da ponte</strong> acima com o nome do container.
                                 </div>
                             </div>
                             {% endif %}
+                        </div>
+
+                        <div class="tp-context-note mb-3">
+                            <i class="bi bi-shield-lock"></i>
+                            <div>
+                                <strong>Nunca publique a porta da ponte na internet.</strong> O RPyC
+                                executa código do outro lado: quem alcança a porta 18812 controla a
+                                máquina do MetaTrader. Ela deve escutar só na rede interna do
+                                Docker. Para acessar de outra máquina, use túnel SSH ou VPN.
+                            </div>
                         </div>
 
                         <div class="tp-context-note">
@@ -242,11 +279,21 @@
                             <p class="small text-muted mt-2">
                                 Verifica biblioteca, terminal e configuração. Nunca revela a senha.
                             </p>
-                            <form method="post" action="/dashboard/settings/mt5/diagnose">
+                            <form method="post" action="/dashboard/settings/mt5/diagnose" class="d-inline">
                                 <button type="submit" class="btn btn-sm btn-outline-light">
                                     <i class="bi bi-clipboard-pulse me-2"></i>Executar diagnóstico
                                 </button>
                             </form>
+                            <form method="post" action="/dashboard/settings/mt5/bridge-check" class="d-inline">
+                                <button type="submit" class="btn btn-sm btn-outline-light ms-2">
+                                    <i class="bi bi-diagram-3 me-2"></i>Diagnosticar ponte
+                                </button>
+                            </form>
+                            <p class="small text-muted mt-2 mb-0">
+                                "Diagnosticar ponte" testa a rota até o container do MetaTrader em
+                                seis passos e para no primeiro que falhar — biblioteca, nome,
+                                porta, RPyC, pacote e terminal.
+                            </p>
                         </details>
                     </div>
                 </div>

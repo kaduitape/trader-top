@@ -114,3 +114,27 @@ def connect_bridge(
 def describe_target(host: str | None, port: int) -> str:
     """Como a tela chama o destino, sem revelar nada sensivel."""
     return f"{host}:{port}" if host else "pacote local (Windows)"
+
+
+def resolve_target(credential, settings) -> tuple[str | None, int]:
+    """Decide com qual terminal falar: banco primeiro, ambiente depois.
+
+    A precedencia importa e nao e arbitraria. O que o operador acabou de
+    salvar na tela tem que ganhar do que ficou no `.env` de uma instalacao
+    antiga — o contrario produz o pior tipo de bug de configuracao: a tela
+    mostra um valor, o sistema usa outro, e nada no log explica.
+
+    O ambiente continua valendo quando o campo esta vazio, para nao quebrar
+    quem ja configurou por `MT5_BRIDGE_HOST`.
+
+    Aceita `credential=None` (nada cadastrado ainda) e qualquer objeto que
+    tenha os atributos — nao ha acoplamento com a ORM.
+    """
+    host = (getattr(credential, "bridge_host", None) or "").strip() or None
+    porta = getattr(credential, "bridge_port", None)
+
+    if host is None:
+        host = (getattr(settings, "mt5_bridge_host", None) or "").strip() or None
+        porta = porta or getattr(settings, "mt5_bridge_port", None)
+
+    return host, int(porta or DEFAULT_BRIDGE_PORT)

@@ -39,6 +39,8 @@ class Mt5CredentialRepository:
         account_type: str,
         terminal_path: str | None = None,
         password: str | None = None,
+        bridge_host: str | None = None,
+        bridge_port: int | None = None,
     ) -> Mt5Credential:
         """Cria ou atualiza a credencial ativa.
 
@@ -46,6 +48,11 @@ class Mt5CredentialRepository:
         sem apagar a senha". Um formulario que reenvia a senha a cada edicao
         obriga o operador a redigita-la para mudar o servidor, e senha
         redigitada com frequencia vira senha anotada em papel.
+
+        `bridge_host` segue a regra oposta da senha: em branco significa
+        "sem ponte" (terminal local), e nao "mantenha o que estava". Sao
+        campos de natureza diferente — a senha o formulario nao devolve, o
+        endereco sim, entao o que chega em branco foi apagado de proposito.
         """
         tipo = account_type.strip().upper()
         if tipo not in ACCOUNT_TYPES:
@@ -62,6 +69,8 @@ class Mt5CredentialRepository:
                 terminal_path=(terminal_path or "").strip() or None,
                 account_type=tipo,
                 is_active=True,
+                bridge_host=(bridge_host or "").strip() or None,
+                bridge_port=bridge_port,
             )
             self._session.add(registro)
             return registro
@@ -70,6 +79,8 @@ class Mt5CredentialRepository:
         registro.server = server.strip()
         registro.terminal_path = (terminal_path or "").strip() or None
         registro.account_type = tipo
+        registro.bridge_host = (bridge_host or "").strip() or None
+        registro.bridge_port = bridge_port
         if password:
             registro.password_encrypted = encrypt_secret(password)
             # Trocar a senha invalida o resultado anterior: um "sucesso" de
