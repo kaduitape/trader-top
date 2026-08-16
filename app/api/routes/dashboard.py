@@ -90,6 +90,7 @@ from app.market.scan_settings import (
     save_observation_config,
 )
 from app.ml.registry import ModelRegistry
+from app.mt5.bridge import describe_target
 from app.mt5.market_data import Timeframe
 from app.mt5.sync_settings import (
     heartbeat_age_label,
@@ -1682,6 +1683,10 @@ def dashboard_settings_hub(
             "calendar_policy": load_calendar_policy(db, settings),
             "mt5_credential": Mt5CredentialRepository(db).get_active(),
             "mt5_password_mask": MASK,
+            "mt5_bridge": describe_target(
+                settings.mt5_bridge_host, settings.mt5_bridge_port
+            ),
+            "mt5_bridge_on": bool(settings.mt5_bridge_host),
             "impacts": IMPACTS,
             "saved": saved,
             "error": error,

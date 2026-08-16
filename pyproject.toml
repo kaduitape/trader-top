@@ -16,6 +16,8 @@ dependencies = [
     "alembic>=1.13",
     "pymysql>=1.1",
     "cryptography>=43.0",
+    # Ponte para um MetaTrader sob Wine em outro container (app/mt5/bridge.py).
+    "rpyc>=6.0",
     "bcrypt>=4.1",
     "python-jose[cryptography]>=3.3",
     "python-multipart>=0.0.12",

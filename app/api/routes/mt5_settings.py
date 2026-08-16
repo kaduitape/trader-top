@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
+from app.core.config import get_settings
 from app.database.models.mt5_credential import ACCOUNT_TYPES, Mt5Credential
 from app.database.models.user import User
 from app.database.repositories.audit_log_repository import AuditLogRepository
@@ -180,6 +181,61 @@ def _wait_for_result(
     return None
 
 
+def _test_through_bridge(db: Session, repo, registro, user) -> Mt5TestOut:
+    """Testa daqui mesmo, pela ponte. A senha so existe em memoria."""
+    from app.core.crypto import CredentialCryptoError
+    from app.mt5.connection_service import MT5ConnectionService
+
+    try:
+        senha = repo.reveal_password(registro)
+    except CredentialCryptoError as exc:
+        repo.record_test(registro, success=False, error=str(exc)[:500])
+        db.commit()
+        return Mt5TestOut(success=False, message=str(exc))
+
+    resultado = MT5ConnectionService(timeout_seconds=TEST_TIMEOUT_SECONDS).test_connection(
+        login=registro.login,
+        password=senha,
+        server=registro.server,
+        terminal_path=registro.terminal_path,
+    )
+    del senha
+
+    repo.record_test(
+        registro,
+        success=resultado.success,
+        error=None if resultado.success else resultado.message[:500],
+    )
+    AuditLogRepository(db).record(
+        action="mt5_connection_test",
+        entity="mt5_credentials",
+        detail=(
+            f"teste pela ponte para {registro.login}@{registro.server} "
+            f"por {user.username}: {'ok' if resultado.success else 'falhou'}"
+        ),
+        user_id=user.id,
+    )
+    db.commit()
+
+    conta = None
+    if resultado.account is not None:
+        c = resultado.account
+        conta = {
+            "login": c.login, "name": c.name, "server": c.server,
+            "company": c.company, "account_type": c.account_type,
+            "currency": c.currency, "balance": c.balance, "equity": c.equity,
+            "margin": c.margin, "margin_free": c.margin_free,
+            "leverage": c.leverage,
+        }
+
+    return Mt5TestOut(
+        success=resultado.success,
+        message=resultado.message,
+        account=conta,
+        tested_at=registro.last_test_at,
+    )
+
+
 @router.post("/test", response_model=Mt5TestOut)
 def mt5_test(
     db: Session = Depends(get_db),
@@ -192,6 +248,12 @@ def mt5_test(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="nenhuma credencial MT5 cadastrada.",
         )
+
+    # Com a ponte configurada (mt5-wine em Docker), o terminal e alcancavel
+    # daqui mesmo: nao ha motivo para delegar nem para exigir o worker.
+    settings = get_settings()
+    if getattr(settings, "mt5_bridge_host", None):
+        return _test_through_bridge(db, repo, registro, user)
 
     if not heartbeat_is_fresh(load_sync_status(db)):
         # Falha honesta: o teste depende de um processo que nao esta vivo.

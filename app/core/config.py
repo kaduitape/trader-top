@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     mt5_login: int | None = None
     mt5_password: str | None = None
     mt5_server: str | None = None
+    mt5_bridge_host: str | None = None
+    """Host da ponte para um MetaTrader sob Wine (mt5-wine em Docker).
+
+    Preenchido, o sistema fala com o terminal a partir do Linux e o worker
+    Windows deixa de ser necessario. Vazio, mantem o comportamento antigo:
+    pacote `MetaTrader5` local, so no Windows."""
+
+    mt5_bridge_port: int = 18812
+
     mt5_timeout_ms: int = 10_000
     mt5_max_reconnect_attempts: int = 5
     mt5_reconnect_backoff_seconds: float = 2.0

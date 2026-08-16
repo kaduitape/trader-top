@@ -205,12 +205,27 @@
 
                         <div class="tp-context-note mb-3">
                             <i class="bi bi-diagram-2"></i>
+                            {% if mt5_bridge_on %}
                             <div>
-                                O teste roda na <strong>máquina Windows</strong>, não aqui: a
-                                biblioteca <code>MetaTrader5</code> fala com o terminal instalado, e
-                                o painel roda em Linux. O botão pede o teste e espera o conector
-                                responder — por isso ele precisa estar online.
+                                <strong>Ponte ativa:</strong> <code>{{ mt5_bridge }}</code>.
+                                O terminal roda sob Wine em outro container, e o painel fala com
+                                ele direto — <strong>o worker Windows não é necessário</strong>.
+                                O caminho é
+                                <code>painel → RPyC → Python do Wine → MetaTrader5 → terminal</code>.
                             </div>
+                            {% else %}
+                            <div>
+                                Sem ponte configurada: o teste roda na <strong>máquina
+                                Windows</strong>, porque a biblioteca <code>MetaTrader5</code> fala
+                                com o terminal instalado e o painel roda em Linux. O botão pede o
+                                teste e espera o conector responder.
+                                <div class="mt-2">
+                                    Usando <strong>mt5-wine em Docker</strong>? Defina
+                                    <code>MT5_BRIDGE_HOST</code> (nome do serviço no compose) e
+                                    <code>MT5_BRIDGE_PORT</code> (padrão 18812) no <code>.env</code>.
+                                </div>
+                            </div>
+                            {% endif %}
                         </div>
 
                         <div class="tp-context-note">

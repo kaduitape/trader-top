@@ -126,10 +126,21 @@ class MT5ConnectionService:
     sintoma aparece longe da causa.
     """
 
-    def __init__(self, *, client=None, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS) -> None:
+    def __init__(
+        self,
+        *,
+        client=None,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        bridge_host: str | None = None,
+        bridge_port: int = 18812,
+    ) -> None:
         self._client = client
         self._timeout = max(5, timeout_seconds)
         self._initialized = False
+        self._bridge = None
+        self._bridge_error: str | None = None
+        self._bridge_host = bridge_host
+        self._bridge_port = bridge_port
         self._attempted = False
         """`initialize` pode devolver False DEPOIS de ja ter subido o
         processo do terminal. Desligar so quando deu certo deixaria esse
@@ -138,13 +149,48 @@ class MT5ConnectionService:
     # --- biblioteca -------------------------------------------------------
 
     def _load(self):
+        """O modulo `MetaTrader5` — local ou do outro lado da ponte.
+
+        Os dois respondem a mesma interface, entao todo o resto deste
+        servico ignora a diferenca. A decisao acontece aqui, uma vez so.
+        """
         if self._client is not None:
             return self._client
+        if self._bridge is not None:
+            return self._bridge.module
+
+        host, porta = self._bridge_target()
+        if host:
+            from app.mt5.bridge import BridgeError, connect_bridge
+
+            try:
+                self._bridge = connect_bridge(host, porta, timeout=self._timeout)
+            except BridgeError as exc:
+                # Guardado para virar mensagem util em vez de "biblioteca nao
+                # instalada", que descreveria a causa errada.
+                self._bridge_error = str(exc)
+                return None
+            return self._bridge.module
+
         try:
             import MetaTrader5  # type: ignore[import-not-found]
         except ImportError:
             return None
         return MetaTrader5
+
+    def _bridge_target(self) -> tuple[str | None, int]:
+        """Host/porta da ponte: o explicito vence, senao a configuracao."""
+        if self._bridge_host is not None:
+            return self._bridge_host, self._bridge_port
+
+        from app.core.config import get_settings
+        from app.mt5.bridge import DEFAULT_BRIDGE_PORT
+
+        settings = get_settings()
+        return (
+            getattr(settings, "mt5_bridge_host", None),
+            int(getattr(settings, "mt5_bridge_port", DEFAULT_BRIDGE_PORT)),
+        )
 
     def library_available(self) -> bool:
         return self._load() is not None
@@ -165,9 +211,13 @@ class MT5ConnectionService:
             return ConnectionResult(
                 success=False,
                 message=(
-                    "Biblioteca MetaTrader5 nao instalada neste processo. "
-                    "Ela so existe para Windows e precisa rodar na mesma "
-                    "maquina do terminal."
+                    self._bridge_error
+                    or (
+                        "Biblioteca MetaTrader5 nao instalada neste processo "
+                        "e nenhuma ponte configurada. Ou rode no Windows, ou "
+                        "aponte MT5_BRIDGE_HOST para o container do "
+                        "MetaTrader sob Wine."
+                    )
                 ),
             )
 
@@ -277,6 +327,11 @@ class MT5ConnectionService:
                 logger.exception("mt5_shutdown_failed")
         self._initialized = False
         self._attempted = False
+        if self._bridge is not None:
+            # A ponte e um socket: deixa-la aberta acumularia conexoes no
+            # container do MetaTrader a cada teste.
+            self._bridge.close()
+            self._bridge = None
 
     # --- operacao completa ------------------------------------------------
 
