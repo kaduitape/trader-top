@@ -34,6 +34,7 @@ arquivo e quem poderia publicar a porta sem pensar.
 from __future__ import annotations
 
 import logging
+import socket
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,17 @@ def connect_bridge(
 
     try:
         conexao = connect(host, port, keepalive=True)
+    except socket.gaierror as exc:
+        # `gaierror` e falha de DNS: o nome nao existe. Nunca chegamos a
+        # tentar a porta, entao falar em "porta publicada" mandaria procurar
+        # no lugar errado — e foi exatamente o que aconteceu em producao.
+        raise BridgeError(
+            f"O nome `{host}` nao existe na rede deste container. Em Docker, "
+            f"o nome de um servico so resolve para quem esta na MESMA rede: "
+            f"confirme com `docker ps` o nome real do container do MetaTrader "
+            f"e, se ele subiu por outro compose, ligue-o a esta rede com "
+            f"`docker network connect trader-top_default <container>`."
+        ) from exc
     except OSError as exc:
         # Recusa de conexao e o erro mais comum e o mais mal explicado por
         # padrao: quase sempre e o container parado ou a porta errada.

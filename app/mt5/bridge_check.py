@@ -64,17 +64,63 @@ def _check_library() -> Step:
     return Step("Biblioteca rpyc", True, f"versao {rpyc.__version__}")
 
 
-def _check_dns(host: str) -> Step:
+# Nomes que as imagens mais comuns de MetaTrader sob Wine usam, mais o
+# atalho para o host. Nao e adivinhacao solta: sao os nomes que aparecem nos
+# composes publicados dessas imagens, e o custo de tentar e um TCP curto.
+_CANDIDATOS = (
+    "mt5-wine",
+    "mt5",
+    "metatrader",
+    "metatrader5",
+    "mt5linux",
+    "trader-top-mt5-wine-1",
+    "host.docker.internal",
+)
+
+
+def suggest_hosts(port: int, *, timeout: float = 1.5, skip: str = "") -> list[str]:
+    """Nomes alcancaveis nesta porta, entre os candidatos conhecidos.
+
+    Existe porque "o nome nao resolve" nao diz qual nome usar, e quem esta
+    olhando o painel nao tem `docker ps` a mao. Um TCP curto contra uma
+    lista pequena responde a pergunta que o operador realmente tem.
+    """
+    encontrados: list[str] = []
+    for nome in _CANDIDATOS:
+        if nome == skip:
+            continue
+        try:
+            with socket.create_connection((nome, port), timeout=timeout):
+                encontrados.append(nome)
+        except OSError:
+            continue
+    return encontrados
+
+
+def _check_dns(host: str, port: int = 0) -> Step:
     try:
         endereco = socket.gethostbyname(host)
     except OSError:
-        return Step(
-            "Nome resolve",
-            False,
+        detalhe = (
             f"`{host}` nao resolve. Em Docker, o nome do servico so resolve "
             "para containers na MESMA rede — confira se painel e MetaTrader "
-            "compartilham a rede no compose.",
+            "compartilham a rede."
         )
+        if port:
+            achados = suggest_hosts(port, skip=host)
+            if achados:
+                detalhe += (
+                    f" Respondem na porta {port} a partir daqui: "
+                    f"{', '.join(achados)} — use um desses no campo "
+                    "'Host da ponte'."
+                )
+            else:
+                detalhe += (
+                    " Nenhum nome conhecido responde nesta porta: o container "
+                    "do MetaTrader provavelmente nao esta nesta rede (ou nao "
+                    "esta rodando)."
+                )
+        return Step("Nome resolve", False, detalhe)
     return Step("Nome resolve", True, f"{host} -> {endereco}")
 
 
@@ -157,7 +203,7 @@ def check_bridge(host: str, port: int, *, timeout: float = 10.0) -> BridgeReport
     if not passos[-1].ok:
         return BridgeReport(host=host, port=port, steps=passos)
 
-    passos.append(_check_dns(host))
+    passos.append(_check_dns(host, port))
     if not passos[-1].ok:
         return BridgeReport(host=host, port=port, steps=passos)
 
