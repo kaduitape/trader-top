@@ -265,9 +265,10 @@
                             <i class="bi bi-shield-lock"></i>
                             <div>
                                 <strong>Nunca publique a porta da ponte na internet.</strong> O RPyC
-                                executa código do outro lado: quem alcança a porta 18812 controla a
-                                máquina do MetaTrader. Ela deve escutar só na rede interna do
-                                Docker. Para acessar de outra máquina, use túnel SSH ou VPN.
+                                executa código do outro lado: quem alcança a porta
+                                <code>{{ mt5_bridge_port }}</code> controla a máquina do MetaTrader.
+                                Ela deve escutar só na rede interna do Docker. Para acessar de outra
+                                máquina, use túnel SSH ou VPN.
                             </div>
                         </div>
 
