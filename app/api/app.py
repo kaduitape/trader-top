@@ -9,7 +9,15 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.dependencies.auth import RedirectToLogin
-from app.api.routes import analysis, auth, dashboard, health, mt5_settings, web_auth
+from app.api.routes import (
+    analysis,
+    auth,
+    dashboard,
+    foto_analise,
+    health,
+    mt5_settings,
+    web_auth,
+)
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -44,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(analysis.router)
     app.include_router(mt5_settings.router)
+    app.include_router(foto_analise.router)
 
     return app
 

@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}Foto Análise — AI Trader PRO{% endblock %}
+{% block content %}
+<section class="tp-analysis-shell tp-foto">
+    <header class="tp-analysis-hero mb-4">
+        <div>
+            <span class="tp-eyebrow"><i class="bi bi-camera me-2"></i>GPS visual do trade</span>
+            <h1 class="display-6 fw-bold mb-2">Foto Análise</h1>
+            <p class="text-muted mb-0">
+                A mesma análise da Análise PRO, projetada no eixo de preço: onde entrar,
+                onde esperar, onde o cenário deixa de valer.
+            </p>
+        </div>
+    </header>
+
+    <div class="card tp-selector-card mb-4">
+        <div class="card-body p-4">
+            <form method="get" action="/dashboard/foto-analise" class="row g-3 align-items-end">
+                <div class="col-lg-3">
+                    <label for="symbol" class="form-label fw-semibold">Ativo</label>
+                    <select class="form-select form-select-lg" id="symbol" name="symbol">
+                        {% for s in symbols %}
+                        <option value="{{ s.name }}" {% if selected_symbol == s.name %}selected{% endif %}>{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-lg-2">
+                    <label for="timeframe" class="form-label fw-semibold">Timeframe</label>
+                    <select class="form-select form-select-lg" id="timeframe" name="timeframe">
+                        {% for tf in timeframes %}
+                        <option value="{{ tf.value }}" {% if selected_timeframe == tf.value %}selected{% endif %}>{{ tf.value }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-lg-2">
+                    <label for="take_ticks" class="form-label fw-semibold">Take (ticks)</label>
+                    <input type="number" class="form-control form-control-lg" id="take_ticks"
+                           name="take_ticks" min="1" max="1000" value="{{ take_ticks }}">
+                </div>
+                <div class="col-lg-2">
+                    <label for="direction" class="form-label fw-semibold">Direção</label>
+                    <select class="form-select form-select-lg" id="direction" name="direction">
+                        <option value="AUTO" {% if direction == "AUTO" %}selected{% endif %}>Automática</option>
+                        <option value="COMPRA" {% if direction == "COMPRA" %}selected{% endif %}>Compra</option>
+                        <option value="VENDA" {% if direction == "VENDA" %}selected{% endif %}>Venda</option>
+                    </select>
+                </div>
+                <div class="col-lg-3">
+                    <button type="submit" class="btn btn-primary btn-lg w-100">
+                        <i class="bi bi-camera me-2"></i>GERAR FOTO ANÁLISE
+                    </button>
+                </div>
+            </form>
+
+            <div class="row g-3 align-items-end mt-1">
+                <div class="col-lg-4">
+                    <label class="form-label small text-muted mb-1">Mapa de calor</label>
+                    <div class="btn-group w-100" role="group">
+                        {% for nivel in ("SIMPLIFICADO", "NORMAL", "AVANCADO") %}
+                        <a class="btn btn-sm {% if detail == nivel %}btn-primary{% else %}btn-outline-light{% endif %}"
+                           href="?symbol={{ selected_symbol }}&timeframe={{ selected_timeframe }}&take_ticks={{ take_ticks }}&direction={{ direction }}&detail={{ nivel }}&view={{ view }}">
+                            {{ nivel|capitalize }}
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label small text-muted mb-1">Visualização</label>
+                    <div class="btn-group w-100" role="group">
+                        {% for modo in ("FOTO", "HEATMAP") %}
+                        <a class="btn btn-sm {% if view == modo %}btn-primary{% else %}btn-outline-light{% endif %}"
+                           href="?symbol={{ selected_symbol }}&timeframe={{ selected_timeframe }}&take_ticks={{ take_ticks }}&direction={{ direction }}&detail={{ detail }}&view={{ modo }}">
+                            {{ modo }}
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="col-lg-5 text-lg-end">
+                    <button type="button" class="btn btn-sm btn-outline-light" id="foto-refresh">
+                        <i class="bi bi-arrow-clockwise me-2"></i>Atualizar análise
+                    </button>
+                    <div class="form-check form-check-inline ms-2">
+                        <input class="form-check-input" type="checkbox" id="foto-auto">
+                        <label class="form-check-label small" for="foto-auto">Auto atualizar</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if error %}
+    <div class="tp-sync-error mb-4"><i class="bi bi-exclamation-octagon"></i><span>{{ error }}</span></div>
+    {% endif %}
+
+    {% if foto %}
+    <div class="row g-4">
+        <div class="col-xl-9">
+            <section class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>
+                        <i class="bi bi-graph-up me-2"></i>{{ foto.symbol }} • {{ foto.timeframe.value }}
+                    </span>
+                    <span class="badge {{ decision_class }} fs-6">{{ decision_label }}</span>
+                </div>
+                <div class="card-body p-3">
+                    {{ chart_svg|safe }}
+                    <div class="d-flex justify-content-center gap-4 mt-3 small text-muted">
+                        <span><span class="tp-legend-swatch" style="background:rgba(34,197,94,.75)"></span> Compra forte</span>
+                        <span><span class="tp-legend-swatch" style="background:rgba(234,179,8,.6)"></span> Neutro</span>
+                        <span><span class="tp-legend-swatch" style="background:rgba(239,68,68,.7)"></span> Venda / risco</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <div class="col-xl-3">
+            <section class="card mb-4">
+                <div class="card-body p-4">
+                    <div class="text-uppercase small text-muted">{{ foto.symbol }} • {{ foto.timeframe.value }}</div>
+                    <div class="display-6 fw-bold {{ bias_class }}">{{ foto.bias }}</div>
+                    <div class="mb-3">
+                        <span class="text-muted small">Força do setup</span>
+                        <div class="progress" style="height:8px">
+                            <div class="progress-bar {{ score_class }}" style="width: {{ foto.score }}%"></div>
+                        </div>
+                        <strong>{{ foto.score }}/100</strong>
+                        <div class="form-text mb-0">
+                            Confluência dos fatores — não é probabilidade de lucro.
+                        </div>
+                    </div>
+
+                    <dl class="tp-detail-list">
+                        <div><dt>Preço</dt><dd>{{ fmt(foto.current_price) }}</dd></div>
+                        {% if foto.entry_zone %}
+                        <div><dt>Entrada</dt><dd>{{ fmt(foto.entry_zone.min) }}–{{ fmt(foto.entry_zone.max) }}</dd></div>
+                        <div><dt>⭐ Sweet spot</dt><dd>{{ fmt(foto.entry_zone.sweet_spot) }}</dd></div>
+                        {% endif %}
+                        {% if foto.take %}<div><dt>Take</dt><dd>{{ fmt(foto.take) }}</dd></div>{% endif %}
+                        {% if foto.stop %}<div><dt>Stop</dt><dd>{{ fmt(foto.stop) }}</dd></div>{% endif %}
+                        <div><dt>Take pedido</dt><dd>+{{ foto.take_ticks }} ticks</dd></div>
+                        <div><dt>Status</dt><dd class="{{ status_class }}">{{ status_label }}</dd></div>
+                    </dl>
+
+                    {% if foto.entry_zone and foto.entry_zone.distance_ticks > 0 %}
+                    <div class="tp-context-note">
+                        <i class="bi bi-arrows-expand"></i>
+                        <div>
+                            Distância até a zona: <strong>{{ foto.entry_zone.distance_ticks }} ticks</strong>.
+                            {{ distance_hint }}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section class="card mb-4">
+                <div class="card-header"><i class="bi bi-list-check me-2"></i>Motivos</div>
+                <div class="card-body p-4">
+                    {% if foto.reasons_for %}
+                    <div class="fw-semibold text-success small mb-2">A FAVOR</div>
+                    <ul class="list-unstyled small mb-3">
+                        {% for motivo in foto.reasons_for %}<li>✓ {{ motivo }}</li>{% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% if foto.reasons_against %}
+                    <div class="fw-semibold text-warning small mb-2">ATENÇÃO</div>
+                    <ul class="list-unstyled small mb-0">
+                        {% for risco in foto.reasons_against %}<li>⚠ {{ risco }}</li>{% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% if not foto.reasons_for and not foto.reasons_against %}
+                    <p class="small text-muted mb-0">Nenhum fator dominante neste momento.</p>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-header"><i class="bi bi-rulers me-2"></i>Níveis importantes</div>
+                <div class="card-body p-0">
+                    <table class="table table-sm mb-0">
+                        <tbody>
+                        {% for nivel in foto.levels %}
+                        <tr>
+                            <td class="fw-semibold">{{ fmt(nivel.price) }}</td>
+                            <td class="text-muted small text-end">{{ nivel.label }}</td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    {% if view == "HEATMAP" %}
+    <section class="card mt-4">
+        <div class="card-header"><i class="bi bi-thermometer-half me-2"></i>Buy / Sell score por faixa</div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead><tr><th>Preço</th><th>Buy</th><th>Sell</th><th>Fatores</th></tr></thead>
+                    <tbody>
+                    {% for faixa in foto.heatmap|reverse %}
+                    <tr {% if foto.entry_zone and faixa.price == foto.entry_zone.sweet_spot %}class="table-active"{% endif %}>
+                        <td class="fw-semibold">
+                            {{ fmt(faixa.price) }}
+                            {% if foto.entry_zone and faixa.price == foto.entry_zone.sweet_spot %}⭐{% endif %}
+                        </td>
+                        <td class="text-success">{{ faixa.buy_score }}</td>
+                        <td class="text-danger">{{ faixa.sell_score }}</td>
+                        <td class="small text-muted">{{ faixa.factors|join(", ") or "—" }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
+    {% if foto.warnings %}
+    <div class="tp-context-note mt-4">
+        <i class="bi bi-exclamation-triangle"></i>
+        <div>
+            <strong>Bloqueios do robô neste momento:</strong>
+            {{ foto.warnings|join(" | ") }}
+            <div class="mt-1 small">
+                Esta tela é consultiva e continua desenhando o cenário; os bloqueios
+                acima impediriam uma entrada automática.
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% endif %}
+</section>
+
+<script>
+(function () {
+    const botao = document.getElementById("foto-refresh");
+    const auto = document.getElementById("foto-auto");
+    if (!botao || !auto) return;
+
+    const CHAVE = "foto-analise-auto";
+    // Recarrega a pagina inteira de proposito: o desenho e feito no
+    // servidor, entao nao ha estado de cliente para preservar — e isso evita
+    // uma segunda copia da logica de render em JavaScript.
+    const recarregar = () => window.location.reload();
+    botao.addEventListener("click", recarregar);
+
+    let timer = null;
+    const aplicar = (ligado) => {
+        window.localStorage.setItem(CHAVE, ligado ? "1" : "0");
+        if (timer) { window.clearInterval(timer); timer = null; }
+        // 15s acompanha o ritmo do resto do painel (mt5.html, apexflow.html)
+        // e nao cria conexao nova: e o mesmo padrao de polling ja usado.
+        if (ligado) timer = window.setInterval(recarregar, 15000);
+    };
+
+    auto.checked = window.localStorage.getItem(CHAVE) === "1";
+    aplicar(auto.checked);
+    auto.addEventListener("change", () => aplicar(auto.checked));
+})();
+</script>
+{% endblock %}

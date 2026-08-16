@@ -2602,3 +2602,24 @@ button.tp-market-action.is-primary:hover {
 }
 
 .tp-apex-runtime.is-info i { color: #68e89a; }
+
+/* --- Foto Análise ------------------------------------------------------- */
+
+/* A legenda do mapa de calor precisa da mesma amostra de cor do gráfico;
+   sem ela o operador tem que adivinhar o que é "verde forte". */
+.tp-legend-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    vertical-align: -2px;
+    margin-right: 4px;
+}
+
+/* O gráfico é o protagonista da tela: ele ocupa a largura disponível e
+   nunca força rolagem horizontal na página. */
+.tp-foto svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}

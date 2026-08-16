@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from urllib.parse import quote
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -2158,3 +2158,101 @@ def dashboard_settings_aisa_save(
     # analise tem que falar com a API nova, nao repetir a resposta da antiga.
     reset_assessment_cache()
     return RedirectResponse(url="/dashboard/settings/aisa?saved=1", status_code=303)
+
+
+@router.get("/dashboard/foto-analise", response_class=HTMLResponse)
+def dashboard_foto_analise(
+    request: Request,
+    symbol: str | None = None,
+    timeframe: str = "M15",
+    take_ticks: int = 20,
+    direction: str = "AUTO",
+    detail: str = "NORMAL",
+    view: str = "FOTO",
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """A Foto Analise renderizada no servidor.
+
+    O desenho e SVG gerado aqui, e nao no navegador, por um motivo de
+    consistencia: quem calcula a zona de entrada e quem a posiciona na tela
+    usam a mesma escala, no mesmo processo. Duas implementacoes da mesma
+    geometria divergem — e divergem em cima de dinheiro.
+    """
+    from app.api.routes.foto_analise import FotoAnaliseIn, build_foto
+    from app.foto_analise.annotations import ChartAnnotationService
+    from app.foto_analise.entry_zone import EntryStatus
+
+    simbolos = SymbolRepository(db).list_active()
+    escolhido = symbol or (simbolos[0].name if simbolos else None)
+    visao = view.upper() if view.upper() in {"FOTO", "HEATMAP"} else "FOTO"
+
+    contexto: dict = {
+        "user": user,
+        "symbols": simbolos,
+        "selected_symbol": escolhido,
+        "selected_timeframe": timeframe.upper(),
+        "timeframes": list(ANALYSIS_TIMEFRAMES),
+        "take_ticks": take_ticks,
+        "direction": direction.upper(),
+        "detail": detail.upper(),
+        "view": visao,
+        "foto": None,
+        "error": None,
+        "fmt": lambda valor: f"{valor:,.5f}".rstrip("0").rstrip("."),
+    }
+
+    if not escolhido:
+        contexto["error"] = (
+            "Nenhum simbolo ativo. Colete dados em Dados de mercado primeiro."
+        )
+        return templates.TemplateResponse(request, "dashboard/foto_analise.html", contexto)
+
+    try:
+        foto = build_foto(
+            db,
+            FotoAnaliseIn(
+                symbol=escolhido,
+                timeframe=timeframe,
+                take_ticks=take_ticks,
+                direction=direction,
+                detail=detail,
+            ),
+        )
+    except HTTPException as exc:
+        contexto["error"] = str(exc.detail)
+        return templates.TemplateResponse(request, "dashboard/foto_analise.html", contexto)
+
+    comprando = foto.bias == "LONG"
+    rotulos = {
+        EntryStatus.READY.value: ("ENTRADA AGORA", "text-success"),
+        EntryStatus.WAIT_PULLBACK.value: ("AGUARDAR PULLBACK", "text-warning"),
+        EntryStatus.MISSED.value: ("PRECO JA PASSOU", "text-warning"),
+        EntryStatus.NO_SETUP.value: ("SEM ENTRADA BOA AGORA", "text-danger"),
+    }
+    status_label, status_class = rotulos.get(foto.status, (foto.status, "text-muted"))
+
+    contexto.update(
+        {
+            "foto": foto,
+            "chart_svg": ChartAnnotationService().render(
+                foto, show_heatmap=(visao == "HEATMAP")
+            ),
+            "decision_label": foto.decision.replace("_", " "),
+            "decision_class": {
+                "COMPRA": "bg-success",
+                "VENDA": "bg-danger",
+                "AGUARDAR": "text-bg-warning",
+            }.get(foto.decision, "text-bg-secondary"),
+            "bias_class": "text-success" if comprando else "text-danger",
+            "score_class": "bg-success" if foto.score >= 70 else "bg-warning",
+            "status_label": status_label,
+            "status_class": status_class,
+            "distance_hint": (
+                "Nao entre agora: espere o preco alcancar a zona."
+                if foto.status == EntryStatus.WAIT_PULLBACK.value
+                else "O preco ja passou pela zona — perseguir aqui e entrar tarde."
+            ),
+        }
+    )
+    return templates.TemplateResponse(request, "dashboard/foto_analise.html", contexto)

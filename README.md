@@ -799,6 +799,9 @@ para as fases correspondentes.
 - `docs/runbook.md` — procedimentos operacionais práticos: instalação,
   rotina de operação, checagens periódicas e resposta a incidentes
   (Fase 15).
+- `docs/foto-analise.md` — FotoAnálise: camada visual sobre a análise
+  existente (mapa de calor de confluência, zona de entrada, sweet spot),
+  o que reaproveita e por que o score não é probabilidade de lucro.
 - `docs/mt5-bridge.md` — ponte RPyC para um MetaTrader sob Wine em
   container: quando usar, como configurar pelo painel, por que a porta
   18812 nunca vai para a internet e o diagnóstico de seis passos.

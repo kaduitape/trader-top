@@ -1,0 +1,444 @@
+"""FotoAnaliseService — orquestra, nunca analisa.
+
+Todo fato aqui vem de `analyze_symbol` e do snapshot multi-timeframe que
+ele ja usa. Este servico so:
+
+1. traduz o `AnalysisReport` em entradas geometricas (`HeatmapInputs`);
+2. chama os dois motores visuais;
+3. monta o resultado que a tela consome.
+
+Se em algum momento este arquivo comecar a calcular indicador, detectar
+padrao ou classificar tendencia, a separacao foi quebrada — e passa a
+existir uma segunda opiniao sobre o mesmo mercado.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+
+import pandas as pd
+from sqlalchemy.orm import Session
+
+from app.foto_analise.entry_zone import EntryStatus, EntryZone, EntryZoneEngine
+from app.foto_analise.heatmap import (
+    HeatmapBand,
+    HeatmapDetail,
+    HeatmapInputs,
+    OpportunityHeatmapEngine,
+)
+from app.market.multi_timeframe import build_multi_timeframe_snapshot
+from app.market.regimes import Trend
+from app.market.smc import (
+    compute_premium_discount,
+    detect_liquidity_sweeps,
+    detect_order_blocks,
+)
+from app.market.structure import (
+    SRLevel,
+    cluster_swing_levels,
+    detect_structure_events,
+    detect_swings,
+    label_swing_structure,
+)
+from app.mt5.market_data import Timeframe
+from app.services.analysis_service import AnalysisReport, analyze_symbol
+from app.strategies.base import SignalDirection
+
+DIRECTION_AUTO = "AUTO"
+MAX_REASONS = 5
+"""Cinco motivos e o limite pedido, e ele e uma decisao de leitura: uma
+lista de quinze fatores nao e mais informativa, e menos — ninguem lê
+quinze antes de operar."""
+
+
+@dataclass(frozen=True, slots=True)
+class Level:
+    """Um nivel de referencia com rotulo pronto para a tela."""
+
+    price: float
+    label: str
+    kind: str
+
+
+@dataclass(frozen=True, slots=True)
+class Candle:
+    """Candle REAL, como veio do MetaTrader. Nada e sintetizado."""
+
+    time: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+@dataclass(frozen=True, slots=True)
+class FotoAnalise:
+    symbol: str
+    timeframe: Timeframe
+    generated_at: datetime
+    decision: str
+    """COMPRA / VENDA / AGUARDAR / SEM_ENTRADA."""
+    bias: str
+    score: float
+    current_price: float
+    take_ticks: int
+    tick_size: float
+    entry_zone: EntryZone | None
+    stop: float | None
+    take: float | None
+    status: str
+    decision_level: float | None
+    heatmap: list[HeatmapBand] = field(default_factory=list)
+    candles: list[Candle] = field(default_factory=list)
+    levels: list[Level] = field(default_factory=list)
+    reasons_for: list[str] = field(default_factory=list)
+    reasons_against: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+class FotoAnaliseService:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        detail: HeatmapDetail = HeatmapDetail.NORMAL,
+        candles_shown: int = 60,
+    ) -> None:
+        self._session = session
+        self._detail = detail
+        self._candles_shown = candles_shown
+
+    def build(
+        self,
+        *,
+        symbol: str,
+        timeframe: Timeframe,
+        take_ticks: int,
+        direction: str = DIRECTION_AUTO,
+        now: datetime | None = None,
+    ) -> FotoAnalise:
+        # `enforce_gates=False`: os portoes de noticias/calendario decidem se
+        # o ROBO opera. Esta tela e consultiva — bloquear o desenho porque ha
+        # evento economico esconderia justamente o mapa que ajuda a decidir
+        # esperar. Os bloqueios continuam visiveis, como aviso.
+        report = analyze_symbol(
+            self._session,
+            symbol=symbol,
+            primary_timeframe=timeframe,
+            now=now,
+            enforce_gates=False,
+        )
+
+        snapshot = build_multi_timeframe_snapshot(
+            self._session,
+            symbol=symbol,
+            now=now or datetime.now().astimezone(),
+        )
+        primary = snapshot.get(timeframe)
+
+        tick_size = self._tick_size(symbol)
+        candles = self._recent_candles(primary)
+        if not candles:
+            return self._empty(
+                symbol, timeframe, report, take_ticks, tick_size,
+                "Sem candles suficientes neste timeframe — colete dados antes de analisar.",
+            )
+
+        current_price = candles[-1].close
+        features = primary.features if primary is not None else None
+        atr = _last_float(features, "atr_14") or (current_price * 0.002)
+
+        suportes, resistencias = self._sr_levels(primary)
+        entradas = HeatmapInputs(
+            current_price=current_price,
+            atr=atr,
+            trend=report.trend,
+            tick_size=tick_size,
+            take_ticks=take_ticks,
+            supports=suportes,
+            resistances=resistencias,
+            vwap=_last_float(features, "vwap_20"),
+            emas={
+                periodo: valor
+                for periodo in (9, 21, 50, 200)
+                if (valor := _last_float(features, f"ema_{periodo}")) is not None
+            },
+            order_blocks=self._order_blocks(primary),
+            sweeps=self._sweeps(primary, suportes + resistencias),
+            premium_discount=self._premium_discount(primary),
+        )
+
+        heatmap = OpportunityHeatmapEngine(detail=self._detail).build(entradas)
+        vies = self._resolve_bias(direction, report)
+        zona = EntryZoneEngine().build(
+            heatmap,
+            direction=vies,
+            current_price=current_price,
+            tick_size=tick_size,
+        )
+
+        nivel_decisao = self._decision_level(heatmap, current_price)
+        stop, take = self._stop_and_take(zona, vies, take_ticks, tick_size, report)
+        decisao, status = self._decide(zona, vies)
+        favor, contra = self._reasons(report, entradas, vies)
+
+        return FotoAnalise(
+            symbol=symbol,
+            timeframe=timeframe,
+            generated_at=report.generated_at,
+            decision=decisao,
+            bias="LONG" if vies == SignalDirection.LONG else "SHORT",
+            score=round(report.score.total_score, 1),
+            current_price=current_price,
+            take_ticks=take_ticks,
+            tick_size=tick_size,
+            entry_zone=zona,
+            stop=stop,
+            take=take,
+            status=status,
+            decision_level=nivel_decisao,
+            heatmap=heatmap,
+            candles=candles,
+            levels=self._levels(zona, stop, take, suportes, resistencias, nivel_decisao),
+            reasons_for=favor,
+            reasons_against=contra,
+            warnings=list(report.rejection_reasons)[:MAX_REASONS],
+        )
+
+    # --- leitura do que ja existe ----------------------------------------
+
+    def _tick_size(self, symbol: str) -> float:
+        """O tick real do simbolo, do catalogo ja coletado do MetaTrader.
+
+        Sem ele, "20 ticks" nao tem significado: 20 ticks no MNQ e 5.00
+        pontos, no EURUSD e 0.0020.
+        """
+        from app.database.repositories.symbol_repository import SymbolRepository
+
+        registro = SymbolRepository(self._session).get_by_name(symbol)
+        if registro is None or registro.point is None:
+            return 0.0
+        return float(registro.point)
+
+    def _recent_candles(self, primary) -> list[Candle]:
+        if primary is None or not primary.candles:
+            return []
+        return [
+            Candle(
+                time=getattr(c, "open_time", None) or getattr(c, "time", None),
+                open=float(c.open),
+                high=float(c.high),
+                low=float(c.low),
+                close=float(c.close),
+                volume=float(getattr(c, "tick_volume", 0) or 0),
+            )
+            for c in primary.candles[-self._candles_shown :]
+        ]
+
+    def _sr_levels(self, primary) -> tuple[list[SRLevel], list[SRLevel]]:
+        if primary is None or not primary.candles:
+            return [], []
+        swings = detect_swings(primary.candles)
+        niveis = cluster_swing_levels(swings)
+        return (
+            [n for n in niveis if n.kind == "SUPPORT"],
+            [n for n in niveis if n.kind == "RESISTANCE"],
+        )
+
+    def _order_blocks(self, primary) -> list:
+        if primary is None or not primary.candles:
+            return []
+        swings = detect_swings(primary.candles)
+        eventos = detect_structure_events(primary.candles, label_swing_structure(swings))
+        return detect_order_blocks(primary.candles, eventos)
+
+    def _sweeps(self, primary, levels: list[SRLevel]) -> list:
+        if primary is None or not primary.candles or not levels:
+            return []
+        return detect_liquidity_sweeps(primary.candles, levels)
+
+    def _premium_discount(self, primary):
+        if primary is None or not primary.candles:
+            return None
+        swings = detect_swings(primary.candles)
+        altos = [s for s in swings if s.kind.value == "HIGH"]
+        baixos = [s for s in swings if s.kind.value == "LOW"]
+        if not altos or not baixos:
+            return None
+        return compute_premium_discount(altos[-1], baixos[-1])
+
+    # --- decisao ----------------------------------------------------------
+
+    def _resolve_bias(self, direction: str, report: AnalysisReport) -> SignalDirection:
+        """Direcao forcada pelo usuario vence a automatica — de proposito.
+
+        Quem pede "so compra" quer ver a melhor compra possivel, mesmo em
+        tendencia de baixa; esconder isso seria responder outra pergunta. O
+        contexto adverso aparece nos motivos e no score, nao como recusa.
+        """
+        pedido = (direction or DIRECTION_AUTO).strip().upper()
+        if pedido in {"COMPRA", "BUY", "LONG"}:
+            return SignalDirection.LONG
+        if pedido in {"VENDA", "SELL", "SHORT"}:
+            return SignalDirection.SHORT
+        return SignalDirection.SHORT if report.trend == Trend.DOWN else SignalDirection.LONG
+
+    def _decide(self, zona: EntryZone | None, vies: SignalDirection) -> tuple[str, str]:
+        if zona is None or zona.status == EntryStatus.NO_SETUP:
+            return "SEM_ENTRADA", EntryStatus.NO_SETUP.value
+        if zona.status == EntryStatus.READY:
+            return ("COMPRA" if vies == SignalDirection.LONG else "VENDA"), zona.status.value
+        return "AGUARDAR", zona.status.value
+
+    def _stop_and_take(
+        self,
+        zona: EntryZone | None,
+        vies: SignalDirection,
+        take_ticks: int,
+        tick_size: float,
+        report: AnalysisReport,
+    ) -> tuple[float | None, float | None]:
+        """Take vem do que o usuario pediu; stop, da estrutura.
+
+        Assimetria proposital. O alvo e escolha do operador — foi o que ele
+        digitou. Ja a invalidacao e um fato do grafico: onde o cenario deixa
+        de valer. Derivar o stop do take produziria uma invalidacao que o
+        mercado nao respeita.
+        """
+        if zona is None:
+            return None, None
+
+        distancia = take_ticks * tick_size
+        if vies == SignalDirection.LONG:
+            take = zona.sweet_spot + distancia
+            stop = zona.min - max(distancia * 0.5, tick_size * 4)
+        else:
+            take = zona.sweet_spot - distancia
+            stop = zona.max + max(distancia * 0.5, tick_size * 4)
+
+        # Quando a analise ja produziu uma invalidacao estrutural, ela vale
+        # mais que a derivada do take — e um nivel observado, nao calculado.
+        niveis = report.trade_levels
+        if niveis is not None:
+            estrutural = niveis.stop_loss
+            mais_distante = (
+                estrutural < zona.min
+                if vies == SignalDirection.LONG
+                else estrutural > zona.max
+            )
+            if mais_distante:
+                stop = estrutural
+
+        return round(stop, 8), round(take, 8)
+
+    def _decision_level(
+        self, heatmap: list[HeatmapBand], current_price: float
+    ) -> float | None:
+        """Onde compradores e vendedores se equivalem.
+
+        E a faixa de menor diferenca entre os dois scores. O desempate pela
+        PROXIMIDADE do preco atual nao e detalhe: num mapa plano dezenas de
+        faixas empatam, e `min()` devolveria a primeira da lista — uma
+        borda arbitraria. Uma linha de batalha desenhada na ponta do
+        grafico e pior que nenhuma, porque parece informacao.
+        """
+        if not heatmap:
+            return None
+        menor = min(abs(b.buy_score - b.sell_score) for b in heatmap)
+        empatadas = [b for b in heatmap if abs(b.buy_score - b.sell_score) == menor]
+        return min(empatadas, key=lambda b: abs(b.price - current_price)).price
+
+    def _levels(
+        self,
+        zona: EntryZone | None,
+        stop: float | None,
+        take: float | None,
+        suportes: list[SRLevel],
+        resistencias: list[SRLevel],
+        decisao: float | None,
+    ) -> list[Level]:
+        niveis: list[Level] = []
+        if resistencias:
+            forte = max(resistencias, key=lambda n: n.touches)
+            niveis.append(Level(forte.price, "Resistencia", "RESISTANCE"))
+        if take is not None:
+            niveis.append(Level(take, "Take", "TAKE"))
+        if decisao is not None:
+            niveis.append(Level(decisao, "Decision Level", "DECISION"))
+        if zona is not None:
+            niveis.append(Level(zona.sweet_spot, "Sweet Spot", "SWEET_SPOT"))
+        if stop is not None:
+            niveis.append(Level(stop, "Invalidacao", "STOP"))
+        if suportes:
+            forte = max(suportes, key=lambda n: n.touches)
+            niveis.append(Level(forte.price, "Suporte", "SUPPORT"))
+        return sorted(niveis, key=lambda n: n.price, reverse=True)
+
+    def _reasons(
+        self, report: AnalysisReport, entradas: HeatmapInputs, vies: SignalDirection
+    ) -> tuple[list[str], list[str]]:
+        """Motivos vindos da analise, nao inventados aqui."""
+        favor = list(report.confluences)[:MAX_REASONS]
+
+        contra: list[str] = []
+        comprando = vies == SignalDirection.LONG
+        obstaculos = entradas.resistances if comprando else entradas.supports
+        proximos = [
+            n
+            for n in obstaculos
+            if abs(n.price - entradas.current_price) <= entradas.atr * 1.5
+        ]
+        if proximos:
+            rotulo = "Resistencia" if comprando else "Suporte"
+            contra.append(f"{rotulo} proxima em {proximos[0].price:.5g}")
+
+        if entradas.trend == Trend.SIDEWAYS:
+            contra.append("Mercado lateral — sem tendencia definida")
+        elif (entradas.trend == Trend.DOWN) == comprando:
+            contra.append("Operacao contra a tendencia do timeframe")
+
+        contra.extend(report.rejection_reasons)
+        return favor, contra[:MAX_REASONS]
+
+    def _empty(
+        self,
+        symbol: str,
+        timeframe: Timeframe,
+        report: AnalysisReport,
+        take_ticks: int,
+        tick_size: float,
+        aviso: str,
+    ) -> FotoAnalise:
+        return FotoAnalise(
+            symbol=symbol,
+            timeframe=timeframe,
+            generated_at=report.generated_at,
+            decision="SEM_ENTRADA",
+            bias="LONG",
+            score=round(report.score.total_score, 1),
+            current_price=0.0,
+            take_ticks=take_ticks,
+            tick_size=tick_size,
+            entry_zone=None,
+            stop=None,
+            take=None,
+            status=EntryStatus.NO_SETUP.value,
+            decision_level=None,
+            warnings=[aviso],
+        )
+
+
+def _last_float(features: pd.DataFrame | None, coluna: str) -> float | None:
+    """Ultimo valor de uma coluna ja calculada, ou None.
+
+    None nunca vira zero: zero seria um valor de mercado plausivel e
+    silenciosamente errado.
+    """
+    if features is None or features.empty or coluna not in features.columns:
+        return None
+    valor = features[coluna].iloc[-1]
+    if pd.isna(valor):
+        return None
+    return float(valor)
