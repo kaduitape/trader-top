@@ -81,8 +81,10 @@ class ChartAnnotationService:
         partes.append(self._zones(foto, escala))
         partes.append(self._candles(foto, escala))
         partes.append(self._levels(foto, escala))
+        partes.append(self._current_price(foto, escala))
         partes.append(self._projection(foto, escala))
         partes.append(self._header(foto))
+        partes.append(self._freshness(foto))
         partes.append("</svg>")
         return "".join(partes)
 
@@ -154,14 +156,15 @@ class ChartAnnotationService:
         )
 
     def _star(self, foto: FotoAnalise, escala: _Scale, price: float, cor: str) -> str:
+        """O ponto mais interessante da zona, marcado para ser achado de
+        relance — e nao lido depois de procurar."""
         y = escala.y(price)
-        x = WIDTH - PADDING_RIGHT - 8
+        x = WIDTH - PADDING_RIGHT
+        texto = f"★ MELHOR ENTRADA {_fmt(price, foto.tick_size)}"
         return (
             f'<line x1="{PADDING_LEFT}" y1="{y:.1f}" x2="{x}" y2="{y:.1f}" '
-            f'stroke="{cor}" stroke-width="2" stroke-dasharray="1 3"/>'
-            f'<text x="{PADDING_LEFT + 8}" y="{y - 6:.1f}" fill="{cor}" '
-            f'font-size="12" font-weight="700">★ MELHOR ENTRADA '
-            f'{_fmt(price, foto.tick_size)}</text>'
+            f'stroke="{cor}" stroke-width="2.5"/>'
+            + _badge(PADDING_LEFT + 6, y - 9, texto, cor, tamanho=12)
         )
 
     def _candles(self, foto: FotoAnalise, escala: _Scale) -> str:
@@ -198,6 +201,10 @@ class ChartAnnotationService:
             "RESISTANCE": ("#f97316", "Resistencia"),
             "SUPPORT": ("#38bdf8", "Suporte"),
         }
+        # Take e stop sao os dois niveis que decidem "vale a pena?" — eles
+        # ganham traco mais grosso que suporte/resistencia de contexto.
+        espessura = {"TAKE": 2.5, "STOP": 2.5, "DECISION": 2.0}
+
         saida: list[str] = []
         for nivel in foto.levels:
             if nivel.kind not in estilos:
@@ -207,13 +214,68 @@ class ChartAnnotationService:
             saida.append(
                 f'<line x1="{PADDING_LEFT}" y1="{y:.1f}" '
                 f'x2="{WIDTH - PADDING_RIGHT}" y2="{y:.1f}" stroke="{cor}" '
-                f'stroke-width="1.5" stroke-dasharray="6 4"/>'
+                f'stroke-width="{espessura.get(nivel.kind, 1.4)}" '
+                f'stroke-dasharray="8 5"/>'
+                # Preco na regua da direita, rotulo dentro do grafico: o
+                # olho encontra o "o que e" sem sair do desenho.
                 f'<text x="{WIDTH - PADDING_RIGHT + 6}" y="{y + 4:.1f}" fill="{cor}" '
-                f'font-size="11">{_fmt(nivel.price, foto.tick_size)}</text>'
-                f'<text x="{WIDTH - PADDING_RIGHT - 6}" y="{y - 5:.1f}" fill="{cor}" '
-                f'font-size="10" text-anchor="end" opacity="0.9">{escape(texto)}</text>'
+                f'font-size="12" font-weight="600">'
+                f'{_fmt(nivel.price, foto.tick_size)}</text>'
+                + _badge(
+                    WIDTH - PADDING_RIGHT - 8, y - 8, escape(texto), cor,
+                    tamanho=10, ancora="end",
+                )
             )
         return "".join(saida)
+
+    def _current_price(self, foto: FotoAnalise, escala: _Scale) -> str:
+        """ONDE ESTAMOS — a primeira pergunta que a tela precisa responder.
+
+        Sem esta linha, o operador tem que deduzir o preco atual pela ponta
+        dos candles, e comparar mentalmente com a zona. Com ela, "entrar
+        agora ou esperar" vira distancia visivel entre duas linhas.
+        """
+        y = escala.y(foto.current_price)
+        sufixo = " (tick)" if foto.price_source == "TICK" else ""
+        return (
+            f'<line x1="{PADDING_LEFT}" y1="{y:.1f}" x2="{WIDTH - PADDING_RIGHT}" '
+            f'y2="{y:.1f}" stroke="#e2e8f0" stroke-width="1.5" '
+            'stroke-dasharray="2 3" opacity="0.95"/>'
+            + _badge(
+                WIDTH - PADDING_RIGHT - 8,
+                y + 4,
+                f"AGORA {_fmt(foto.current_price, foto.tick_size)}{sufixo}",
+                "#e2e8f0",
+                tamanho=11,
+                ancora="end",
+                texto_escuro=True,
+            )
+        )
+
+    def _freshness(self, foto: FotoAnalise) -> str:
+        """Selo de dados velhos, atravessado no grafico.
+
+        Discreto nao serve: uma foto bonita sobre precos de ontem PARECE
+        atual, e e assim que alguem opera em cima do passado sem perceber.
+        """
+        if not foto.is_stale:
+            return ""
+        idade = (
+            f"{foto.data_age_minutes:.0f} min"
+            if foto.data_age_minutes is not None
+            else "desconhecida"
+        )
+        return (
+            f'<rect x="{PADDING_LEFT}" y="{HEIGHT / 2 - 26:.0f}" '
+            f'width="{WIDTH - PADDING_LEFT - PADDING_RIGHT}" height="52" '
+            'fill="#7f1d1d" opacity="0.82"/>'
+            f'<text x="{WIDTH / 2:.0f}" y="{HEIGHT / 2 - 4:.0f}" fill="#fff" '
+            'font-size="17" font-weight="800" text-anchor="middle">'
+            "DADOS DESATUALIZADOS</text>"
+            f'<text x="{WIDTH / 2:.0f}" y="{HEIGHT / 2 + 16:.0f}" fill="#fecaca" '
+            'font-size="12" text-anchor="middle">'
+            f"ultima candle ha {escape(idade)} — o coletor MT5 parece parado</text>"
+        )
 
     def _projection(self, foto: FotoAnalise, escala: _Scale) -> str:
         """A seta do cenario esperado — tracejada porque e projecao.
@@ -263,6 +325,34 @@ class ChartAnnotationService:
             f'<text x="{WIDTH - PADDING_RIGHT}" y="20" fill="#e2e8f0" font-size="13" '
             f'font-weight="700" text-anchor="end">{escape(estado)}</text>'
         )
+
+
+def _badge(
+    x: float,
+    y: float,
+    texto: str,
+    cor: str,
+    *,
+    tamanho: int = 11,
+    ancora: str = "start",
+    texto_escuro: bool = False,
+) -> str:
+    """Rotulo com fundo solido.
+
+    Texto colorido direto sobre candles e mapa de calor fica ilegivel
+    exatamente onde ele mais importa — em cima da zona de entrada, que e a
+    regiao mais pintada do grafico. O fundo custa alguns pixels e devolve a
+    leitura em um relance, que era o requisito da tela.
+    """
+    largura = len(texto) * tamanho * 0.58 + 12
+    esquerda = x - largura if ancora == "end" else x
+    return (
+        f'<rect x="{esquerda:.1f}" y="{y - tamanho:.1f}" width="{largura:.1f}" '
+        f'height="{tamanho + 7}" rx="3" fill="{cor}" opacity="0.92"/>'
+        f'<text x="{esquerda + 6:.1f}" y="{y - 1:.1f}" '
+        f'fill="{"#0f172a" if texto_escuro else "#0b1220"}" font-size="{tamanho}" '
+        f'font-weight="700">{texto}</text>'
+    )
 
 
 def _heat_color(score: float) -> tuple[str, float]:

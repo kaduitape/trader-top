@@ -32,6 +32,7 @@ def _limpa(engine):
     def apagar() -> None:
         from app.database.models.candle import Candle
         from app.database.models.symbol import Symbol
+        from app.database.models.tick import Tick
         from app.database.session import get_session_factory
 
         sessao = get_session_factory()()
@@ -39,6 +40,9 @@ def _limpa(engine):
             registro = SymbolRepository(sessao).get_by_name(SIMBOLO)
             if registro is not None:
                 sessao.query(Candle).filter_by(symbol_id=registro.id).delete()
+                # Ticks explicitamente: o SQLite nao aplica ON DELETE CASCADE
+                # por padrao, e um tick sobrevivente vira preco de outro teste.
+                sessao.query(Tick).filter_by(symbol_id=registro.id).delete()
                 sessao.query(Symbol).filter_by(id=registro.id).delete()
                 sessao.commit()
         finally:
@@ -355,3 +359,152 @@ def test_the_page_requires_login(client) -> None:
     resposta = client.get("/dashboard/foto-analise", follow_redirects=False)
 
     assert resposta.status_code in (302, 303, 401)
+
+
+# --- atualidade dos dados --------------------------------------------------
+
+
+def test_stale_data_is_announced_not_drawn_silently(db_session) -> None:
+    """Uma foto bonita sobre precos de ontem PARECE atual — e e assim que
+    alguem opera em cima do passado sem perceber."""
+    _semeia(db_session)
+
+    # A semente termina em INICIO + 320*15min; "agora" muito depois disso.
+    foto = _foto(db_session, now=INICIO + timedelta(days=30))
+
+    assert foto.is_stale is True
+    assert foto.data_age_minutes > 0
+    assert any("DESATUALIZADOS" in aviso for aviso in foto.warnings)
+
+
+def test_fresh_data_is_not_flagged(db_session) -> None:
+    _semeia(db_session)
+    ultima = INICIO + timedelta(minutes=15 * 319)
+
+    foto = _foto(db_session, now=ultima + timedelta(minutes=5))
+
+    assert foto.is_stale is False
+
+
+def test_the_staleness_limit_follows_the_timeframe(db_session) -> None:
+    """30 minutos de atraso e irrelevante no D1 e inaceitavel no M1 — um
+    limite fixo estaria errado nos dois casos."""
+    _semeia(db_session)
+    ultima = INICIO + timedelta(minutes=15 * 319)
+
+    dentro = _foto(db_session, now=ultima + timedelta(minutes=40))
+    fora = _foto(db_session, now=ultima + timedelta(minutes=50))
+
+    assert dentro.is_stale is False, "40min < 3 barras de M15"
+    assert fora.is_stale is True, "50min > 3 barras de M15"
+
+
+def test_the_stale_banner_is_impossible_to_miss(db_session) -> None:
+    _semeia(db_session)
+    foto = _foto(db_session, now=INICIO + timedelta(days=30))
+
+    svg = ChartAnnotationService().render(foto)
+
+    assert "DADOS DESATUALIZADOS" in svg
+
+
+def test_a_fresh_chart_has_no_banner(db_session) -> None:
+    _semeia(db_session)
+    ultima = INICIO + timedelta(minutes=15 * 319)
+
+    svg = ChartAnnotationService().render(
+        _foto(db_session, now=ultima + timedelta(minutes=5))
+    )
+
+    assert "DADOS DESATUALIZADOS" not in svg
+
+
+def test_the_last_candle_is_the_newest_one(db_session) -> None:
+    """O pedido literal: pegar a candle mais atualizada, nao uma antiga."""
+    _semeia(db_session)
+    foto = _foto(db_session)
+
+    esperado = INICIO + timedelta(minutes=15 * 319)
+    assert foto.last_candle_at.replace(tzinfo=UTC) == esperado
+    assert foto.candles[-1].time.replace(tzinfo=UTC) == esperado
+
+
+# --- preco mais atual ------------------------------------------------------
+
+
+def _semeia_tick(db_session, *, quando, bid: float, ask: float) -> None:
+    from app.database.repositories.tick_repository import TickRepository
+    from app.mt5.market_data import RawTick
+
+    simbolo = SymbolRepository(db_session).get_by_name(SIMBOLO)
+    TickRepository(db_session).bulk_upsert(
+        simbolo.id,
+        [RawTick(timestamp=quando, bid=bid, ask=ask, last=bid, volume=1, flags=0)],
+    )
+    db_session.commit()
+
+
+def test_a_newer_tick_wins_over_the_closed_candle(db_session) -> None:
+    """A coleta so grava candles FECHADAS: a ultima ja nasce ate um
+    timeframe atrasada. Com tick mais novo, ele e o preco de verdade."""
+    _semeia(db_session)
+    ultima = INICIO + timedelta(minutes=15 * 319)
+    _semeia_tick(db_session, quando=ultima + timedelta(minutes=5), bid=25000.0, ask=25000.5)
+
+    foto = _foto(db_session, now=ultima + timedelta(minutes=6))
+
+    assert foto.price_source == "TICK"
+    assert foto.current_price == 25000.25
+
+
+def test_an_older_tick_is_ignored(db_session) -> None:
+    """Tick antigo nao pode sobrescrever um fechamento mais novo."""
+    _semeia(db_session)
+    _semeia_tick(db_session, quando=INICIO + timedelta(minutes=10), bid=1.0, ask=1.5)
+
+    foto = _foto(db_session)
+
+    assert foto.price_source == "CANDLE"
+    assert foto.current_price == foto.candles[-1].close
+
+
+def test_without_ticks_the_close_is_used(db_session) -> None:
+    _semeia(db_session)
+
+    foto = _foto(db_session)
+
+    assert foto.price_source == "CANDLE"
+
+
+# --- clareza dos sinais ----------------------------------------------------
+
+
+def test_the_chart_shows_where_we_are(db_session) -> None:
+    """"Onde estamos" e a primeira pergunta da tela; sem esta linha o
+    operador deduz o preco pela ponta dos candles."""
+    _semeia(db_session)
+
+    svg = ChartAnnotationService().render(_foto(db_session))
+
+    assert "AGORA" in svg
+
+
+def test_the_key_markers_are_labelled_on_the_chart(db_session) -> None:
+    _semeia(db_session)
+    foto = _foto(db_session)
+
+    svg = ChartAnnotationService().render(foto)
+
+    assert "MELHOR ENTRADA" in svg
+    assert "TAKE" in svg
+    assert "STOP / INVALIDACAO" in svg
+
+
+def test_labels_have_a_solid_background(db_session) -> None:
+    """Texto colorido sobre candles e mapa de calor fica ilegivel
+    exatamente onde importa: em cima da zona de entrada."""
+    _semeia(db_session)
+
+    svg = ChartAnnotationService().render(_foto(db_session))
+
+    assert 'rx="3"' in svg, "os rotulos precisam de fundo solido"

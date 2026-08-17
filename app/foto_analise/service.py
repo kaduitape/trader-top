@@ -15,7 +15,7 @@ existir uma segunda opiniao sobre o mesmo mercado.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -90,6 +90,19 @@ class FotoAnalise:
     take: float | None
     status: str
     decision_level: float | None
+    last_candle_at: datetime | None = None
+    """Abertura da candle mais recente usada no desenho."""
+    data_age_minutes: float | None = None
+    price_source: str = "CANDLE"
+    """CANDLE ou TICK. Um tick mais novo que a ultima candle fechada e o
+    preco mais atual que este sistema tem — e a diferenca importa quando o
+    operador compara a tela com o terminal."""
+    is_stale: bool = False
+    """Dados velhos nao viram desenho silencioso.
+
+    Uma foto bonita sobre precos de ontem e pior que nenhuma foto: ela
+    parece atual. Quando o coletor para, quem olha a tela precisa VER que
+    parou, nao descobrir depois de operar em cima dela."""
     heatmap: list[HeatmapBand] = field(default_factory=list)
     candles: list[Candle] = field(default_factory=list)
     levels: list[Level] = field(default_factory=list)
@@ -146,7 +159,9 @@ class FotoAnaliseService:
                 "Sem candles suficientes neste timeframe — colete dados antes de analisar.",
             )
 
-        current_price = candles[-1].close
+        agora = now or datetime.now().astimezone()
+        current_price, fonte_preco = self._latest_price(symbol, candles, agora)
+        idade, velho = self._data_age(candles[-1].time, timeframe, agora)
         features = primary.features if primary is not None else None
         atr = _last_float(features, "atr_14") or (current_price * 0.002)
 
@@ -204,7 +219,11 @@ class FotoAnaliseService:
             levels=self._levels(zona, stop, take, suportes, resistencias, nivel_decisao),
             reasons_for=favor,
             reasons_against=contra,
-            warnings=list(report.rejection_reasons)[:MAX_REASONS],
+            warnings=self._warnings(report, velho, idade),
+            last_candle_at=candles[-1].time,
+            data_age_minutes=idade,
+            price_source=fonte_preco,
+            is_stale=velho,
         )
 
     # --- leitura do que ja existe ----------------------------------------
@@ -221,6 +240,76 @@ class FotoAnaliseService:
         if registro is None or registro.point is None:
             return 0.0
         return float(registro.point)
+
+    def _latest_price(
+        self, symbol: str, candles: list[Candle], agora: datetime
+    ) -> tuple[float, str]:
+        """O preco mais atual que o sistema tem.
+
+        A coleta so grava candles FECHADAS — por desenho, a ultima candle ja
+        nasce ate um timeframe atrasada. Quando ha tick mais novo que ela,
+        ele e o preco de verdade, e usa-lo evita que a tela discorde do
+        terminal por um motivo que ninguem consegue explicar.
+
+        Nao inventa nada: sem tick mais novo, continua o fechamento da
+        ultima candle.
+        """
+        from app.database.repositories.symbol_repository import SymbolRepository
+        from app.database.repositories.tick_repository import TickRepository
+
+        fechamento = candles[-1].close
+        registro = SymbolRepository(self._session).get_by_name(symbol)
+        if registro is None:
+            return fechamento, "CANDLE"
+
+        ticks = TickRepository(self._session).get_recent(registro.id, 1)
+        if not ticks:
+            return fechamento, "CANDLE"
+
+        tick = ticks[-1]
+        marca = _aware(tick.timestamp)
+        ultima_candle = _aware(candles[-1].time)
+        if marca is None or ultima_candle is None or marca <= ultima_candle:
+            return fechamento, "CANDLE"
+
+        # Mid entre bid e ask: usar so o bid enviesaria toda a geometria da
+        # zona pelo lado comprado do spread.
+        bid, ask = float(tick.bid), float(tick.ask)
+        preco = (bid + ask) / 2 if ask > 0 else bid
+        return (preco, "TICK") if preco > 0 else (fechamento, "CANDLE")
+
+    def _data_age(
+        self, ultima: datetime | None, timeframe: Timeframe, agora: datetime
+    ) -> tuple[float | None, bool]:
+        """Idade do dado e se ela ja compromete o desenho.
+
+        O limite e relativo ao timeframe, nao um numero fixo: 30 minutos de
+        atraso e irrelevante no D1 e inaceitavel no M1. Tres barras de
+        atraso significa que o coletor perdeu o passo.
+        """
+        from app.mt5.market_data import TIMEFRAME_SECONDS
+
+        marca = _aware(ultima)
+        if marca is None:
+            return None, True
+
+        idade = (_aware(agora) - marca).total_seconds()
+        limite = TIMEFRAME_SECONDS.get(timeframe, 900) * 3
+        return round(idade / 60, 1), idade > limite
+
+    def _warnings(
+        self, report: AnalysisReport, velho: bool, idade: float | None
+    ) -> list[str]:
+        avisos: list[str] = []
+        if velho:
+            quanto = f"{idade:.0f} min" if idade is not None else "tempo desconhecido"
+            avisos.append(
+                f"DADOS DESATUALIZADOS: a candle mais recente tem {quanto}. "
+                "O coletor MT5 provavelmente esta parado — esta foto retrata o "
+                "passado, nao o mercado agora."
+            )
+        avisos.extend(report.rejection_reasons)
+        return avisos[:MAX_REASONS]
 
     def _recent_candles(self, primary) -> list[Candle]:
         if primary is None or not primary.candles:
@@ -428,6 +517,18 @@ class FotoAnaliseService:
             decision_level=None,
             warnings=[aviso],
         )
+
+
+def _aware(momento: datetime | None) -> datetime | None:
+    """Compara datas sem explodir por fuso.
+
+    O SQLite devolve datetime ingenuo mesmo em coluna com timezone; o MySQL
+    devolve consciente. Subtrair um do outro levanta TypeError, e a falha
+    apareceria so em producao — nunca no teste.
+    """
+    if momento is None:
+        return None
+    return momento if momento.tzinfo is not None else momento.replace(tzinfo=UTC)
 
 
 def _last_float(features: pd.DataFrame | None, coluna: str) -> float | None:

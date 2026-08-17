@@ -92,6 +92,20 @@
     <div class="tp-sync-error mb-4"><i class="bi bi-exclamation-octagon"></i><span>{{ error }}</span></div>
     {% endif %}
 
+    {% if foto and foto.is_stale %}
+    <div class="tp-sync-error mb-4">
+        <i class="bi bi-clock-history"></i>
+        <span>
+            <strong>Dados desatualizados.</strong>
+            A candle mais recente de {{ foto.symbol }} tem
+            <strong>{{ foto.data_age_minutes|round|int }} minutos</strong>
+            ({{ foto.last_candle_at.strftime("%d/%m %H:%M") if foto.last_candle_at else "—" }}).
+            Esta foto retrata o passado — o coletor MT5 provavelmente está parado.
+            Verifique em <a href="/dashboard/mt5">Conexão MT5</a>.
+        </span>
+    </div>
+    {% endif %}
+
     {% if foto %}
     <div class="row g-4">
         <div class="col-xl-9">
@@ -130,7 +144,24 @@
                     </div>
 
                     <dl class="tp-detail-list">
-                        <div><dt>Preço</dt><dd>{{ fmt(foto.current_price) }}</dd></div>
+                        <div>
+                            <dt>Preço</dt>
+                            <dd>
+                                {{ fmt(foto.current_price) }}
+                                <span class="text-muted small">
+                                    {{ "tick" if foto.price_source == "TICK" else "fech." }}
+                                </span>
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>Última candle</dt>
+                            <dd class="{{ 'text-danger' if foto.is_stale else 'text-muted' }}">
+                                {%- if foto.last_candle_at -%}
+                                {{ foto.last_candle_at.strftime("%d/%m %H:%M") }}
+                                ({{ foto.data_age_minutes|round|int }} min)
+                                {%- else -%}—{%- endif -%}
+                            </dd>
+                        </div>
                         {% if foto.entry_zone %}
                         <div><dt>Entrada</dt><dd>{{ fmt(foto.entry_zone.min) }}–{{ fmt(foto.entry_zone.max) }}</dd></div>
                         <div><dt>⭐ Sweet spot</dt><dd>{{ fmt(foto.entry_zone.sweet_spot) }}</dd></div>

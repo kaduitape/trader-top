@@ -64,6 +64,12 @@ def serialize(foto: FotoAnalise) -> dict:
         "take": foto.take,
         "status": foto.status,
         "decision_level": foto.decision_level,
+        "last_candle_at": (
+            foto.last_candle_at.isoformat() if foto.last_candle_at else None
+        ),
+        "data_age_minutes": foto.data_age_minutes,
+        "price_source": foto.price_source,
+        "is_stale": foto.is_stale,
         "heatmap": [
             {
                 "price": faixa.price,

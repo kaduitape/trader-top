@@ -64,6 +64,27 @@ aparecem como aviso.
 **A seta é tracejada.** É projeção do cenário analisado, não previsão.
 Sólida, leria como afirmação sobre o futuro.
 
+## Atualidade dos dados
+
+A foto vale o que valem os candles no banco. Se o coletor MT5 parar, o
+desenho continua bonito e passa a retratar o passado — e é assim que alguém
+opera em cima de preço velho sem perceber.
+
+Por isso a idade é tratada como parte do resultado, não como detalhe:
+
+- `last_candle_at`, `data_age_minutes` e `is_stale` saem no payload e na tela;
+- acima de **3 barras** do timeframe escolhido, o gráfico recebe uma tarja
+  vermelha atravessada (`DADOS DESATUALIZADOS`) e um aviso no topo da página.
+  O limite é relativo porque 30 minutos de atraso é irrelevante no D1 e
+  inaceitável no M1;
+- o preço atual usa o **tick mais recente** quando ele é mais novo que a
+  última candle fechada (`price_source: TICK`), com o mid entre bid e ask —
+  usar só o bid enviesaria a geometria da zona pelo lado comprado do spread.
+
+A coleta grava apenas candles **fechadas**, então a última já nasce até um
+timeframe atrasada. Isso é do desenho, não defeito; o tick cobre a diferença
+quando existe.
+
 ## Vocabulário: o que o score NÃO é
 
 O número de cada faixa é **confluência e qualidade relativa da região**.
