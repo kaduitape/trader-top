@@ -2623,3 +2623,9 @@ button.tp-market-action.is-primary:hover {
     width: 100%;
     height: auto;
 }
+
+/* O gráfico do Pulso tem altura reservada: sem isso a página salta a cada
+   ciclo de atualização, e um layout que pula é impossível de acompanhar. */
+.tp-pulso-chart {
+    min-height: 420px;
+}

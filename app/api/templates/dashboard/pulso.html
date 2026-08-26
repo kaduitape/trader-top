@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}Pulso ao Vivo — AI Trader PRO{% endblock %}
+{% block content %}
+<section class="tp-analysis-shell tp-foto tp-pulso">
+    <header class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+        <div>
+            <span class="tp-eyebrow"><i class="bi bi-broadcast me-2"></i>Monitor contínuo</span>
+            <h1 class="display-6 fw-bold mb-0">Pulso ao Vivo</h1>
+        </div>
+        <div class="d-flex align-items-center gap-3">
+            <span id="pulso-live" class="tp-status-pill">
+                <span class="tp-live-dot tp-dot-warning" id="pulso-dot"></span>
+                <span id="pulso-live-text">iniciando…</span>
+            </span>
+            <button type="button" class="btn btn-outline-light btn-sm" id="pulso-pause">
+                <i class="bi bi-pause-fill me-1"></i><span>Pausar</span>
+            </button>
+        </div>
+    </header>
+
+    <form class="row g-2 align-items-end mb-3" id="pulso-form" onsubmit="return false;">
+        <div class="col-6 col-lg-3">
+            <label for="p-symbol" class="form-label small text-muted mb-1">Ativo</label>
+            <select class="form-select" id="p-symbol">
+                {% for s in symbols %}
+                <option value="{{ s.name }}" {% if selected_symbol == s.name %}selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-6 col-lg-2">
+            <label for="p-timeframe" class="form-label small text-muted mb-1">Timeframe</label>
+            <select class="form-select" id="p-timeframe">
+                {% for tf in timeframes %}
+                <option value="{{ tf.value }}" {% if selected_timeframe == tf.value %}selected{% endif %}>{{ tf.value }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-6 col-lg-2">
+            <label for="p-take" class="form-label small text-muted mb-1">Take (ticks)</label>
+            <input type="number" class="form-control" id="p-take" min="1" max="1000" value="{{ take_ticks }}">
+        </div>
+        <div class="col-6 col-lg-2">
+            <label for="p-direction" class="form-label small text-muted mb-1">Direção</label>
+            <select class="form-select" id="p-direction">
+                <option value="AUTO">Automática</option>
+                <option value="COMPRA">Compra</option>
+                <option value="VENDA">Venda</option>
+            </select>
+        </div>
+        <div class="col-6 col-lg-3">
+            <label for="p-interval" class="form-label small text-muted mb-1">Atualizar a cada</label>
+            <select class="form-select" id="p-interval">
+                <option value="5">5 segundos</option>
+                <option value="15" selected>15 segundos</option>
+                <option value="60">1 minuto</option>
+            </select>
+        </div>
+    </form>
+
+    <div id="pulso-error" class="tp-sync-error mb-3 d-none">
+        <i class="bi bi-exclamation-octagon"></i><span id="pulso-error-text"></span>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-xl-9">
+            <section class="card h-100">
+                <div class="card-body p-3">
+                    <div id="pulso-chart" class="tp-pulso-chart">
+                        <div class="text-muted text-center py-5">Carregando…</div>
+                    </div>
+                    <div class="d-flex justify-content-center gap-4 mt-3 small text-muted flex-wrap">
+                        <span><span class="tp-legend-swatch" style="background:rgba(34,197,94,.75)"></span> Entrada favorável</span>
+                        <span><span class="tp-legend-swatch" style="background:rgba(234,179,8,.6)"></span> Neutro</span>
+                        <span><span class="tp-legend-swatch" style="background:rgba(239,68,68,.7)"></span> Zona de risco</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <div class="col-xl-3">
+            <section class="card mb-3">
+                <div class="card-body p-4 text-center">
+                    <div class="display-5 fw-bold" id="p-bias">—</div>
+                    <div class="text-muted small mb-3" id="p-decision">aguardando</div>
+                    <div class="h3 fw-bold mb-0" id="p-price">—</div>
+                    <div class="text-muted small" id="p-price-src">—</div>
+                </div>
+            </section>
+
+            <section class="card mb-3">
+                <div class="card-body p-4">
+                    <dl class="tp-detail-list mb-0">
+                        <div><dt>Força</dt><dd id="p-score">—</dd></div>
+                        <div><dt>Entrada</dt><dd id="p-entry">—</dd></div>
+                        <div><dt>⭐ Sweet spot</dt><dd id="p-sweet">—</dd></div>
+                        <div><dt>Take</dt><dd id="p-take-price">—</dd></div>
+                        <div><dt>Stop</dt><dd id="p-stop">—</dd></div>
+                        <div><dt>Distância</dt><dd id="p-distance">—</dd></div>
+                    </dl>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-body p-4">
+                    <ul class="list-unstyled small mb-0" id="p-reasons">
+                        <li class="text-muted">—</li>
+                    </ul>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <div class="tp-context-note mt-4">
+        <i class="bi bi-info-circle"></i>
+        <div>
+            <strong>"Ao vivo" é limitado pelo coletor.</strong> Esta tela relê o
+            banco a cada ciclo — ela é tão atual quanto os dados que o conector MT5
+            gravou. Se ele parar, o gráfico avisa com uma tarja em vez de continuar
+            desenhando o passado como se fosse agora. As cores indicam
+            <strong>confluência</strong>, não probabilidade de lucro.
+        </div>
+    </div>
+</section>
+
+<script>
+(function () {
+    const alvo = document.getElementById("pulso-chart");
+    if (!alvo) return;
+
+    const el = (id) => document.getElementById(id);
+    const campos = {
+        symbol: el("p-symbol"), timeframe: el("p-timeframe"),
+        take: el("p-take"), direction: el("p-direction"), interval: el("p-interval"),
+    };
+    const botao = el("pulso-pause");
+    const ponto = el("pulso-dot");
+    const rotuloVivo = el("pulso-live-text");
+    const erro = el("pulso-error");
+
+    let timer = null;
+    let pausado = false;
+    let buscando = false;
+
+    const texto = (id, valor) => { el(id).textContent = valor ?? "—"; };
+    const num = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR", {maximumFractionDigits: 5}));
+
+    function mostrarErro(mensagem) {
+        el("pulso-error-text").textContent = mensagem;
+        erro.classList.remove("d-none");
+    }
+
+    function aplicar(dados) {
+        erro.classList.add("d-none");
+        alvo.innerHTML = dados.svg;
+
+        const comprando = dados.bias === "LONG";
+        const bias = el("p-bias");
+        bias.textContent = comprando ? "COMPRA" : "VENDA";
+        bias.className = "display-5 fw-bold " + (comprando ? "text-success" : "text-danger");
+
+        const rotulos = {
+            READY: "entrada agora", WAIT_PULLBACK: "aguardar pullback",
+            MISSED: "preço já passou", NO_SETUP: "sem entrada boa agora",
+        };
+        texto("p-decision", rotulos[dados.status] || dados.status);
+        texto("p-price", num(dados.price));
+        texto("p-price-src", dados.price_source === "TICK" ? "tick ao vivo" : "fechamento da candle");
+        texto("p-score", dados.score + "/100");
+        texto("p-entry", dados.entry_min ? num(dados.entry_min) + "–" + num(dados.entry_max) : "—");
+        texto("p-sweet", num(dados.sweet_spot));
+        texto("p-take-price", num(dados.take));
+        texto("p-stop", num(dados.stop));
+        texto("p-distance", dados.distance_ticks === null ? "—" : dados.distance_ticks + " ticks");
+
+        const lista = el("p-reasons");
+        lista.innerHTML = "";
+        (dados.reasons_for || []).forEach((m) => {
+            const li = document.createElement("li");
+            li.className = "text-success";
+            li.textContent = "✓ " + m;
+            lista.appendChild(li);
+        });
+        (dados.reasons_against || []).forEach((m) => {
+            const li = document.createElement("li");
+            li.className = "text-warning";
+            li.textContent = "⚠ " + m;
+            lista.appendChild(li);
+        });
+        if (!lista.children.length) {
+            lista.innerHTML = '<li class="text-muted">Nenhum fator dominante.</li>';
+        }
+
+        // O ponto verde nao pode significar so "o navegador respondeu": com o
+        // coletor parado, isso seria um sinal de vida sobre dados mortos.
+        const agora = new Date().toLocaleTimeString("pt-BR");
+        if (dados.is_stale) {
+            ponto.className = "tp-live-dot tp-dot-danger";
+            rotuloVivo.textContent = "dados parados — " + agora;
+        } else {
+            ponto.className = "tp-live-dot tp-dot-success";
+            rotuloVivo.textContent = "ao vivo — " + agora;
+        }
+    }
+
+    async function buscar() {
+        if (buscando || pausado) return;
+        buscando = true;
+        try {
+            const params = new URLSearchParams({
+                symbol: campos.symbol.value,
+                timeframe: campos.timeframe.value,
+                take_ticks: campos.take.value || "20",
+                direction: campos.direction.value,
+            });
+            const resposta = await fetch("/dashboard/foto-analise/live?" + params, {
+                headers: {"Accept": "application/json"},
+            });
+            const dados = await resposta.json();
+            if (!resposta.ok || dados.error) {
+                mostrarErro(dados.error || "Falha ao atualizar.");
+                ponto.className = "tp-live-dot tp-dot-danger";
+                rotuloVivo.textContent = "erro";
+                return;
+            }
+            aplicar(dados);
+        } catch (e) {
+            mostrarErro("Sem resposta do servidor. Tentando de novo no próximo ciclo.");
+            ponto.className = "tp-live-dot tp-dot-danger";
+        } finally {
+            buscando = false;
+        }
+    }
+
+    function reagendar() {
+        if (timer) window.clearInterval(timer);
+        const segundos = parseInt(campos.interval.value, 10) || 15;
+        timer = window.setInterval(buscar, segundos * 1000);
+    }
+
+    Object.values(campos).forEach((campo) => {
+        campo.addEventListener("change", () => {
+            if (campo === campos.interval) reagendar();
+            else buscar();
+        });
+    });
+
+    botao.addEventListener("click", () => {
+        pausado = !pausado;
+        botao.querySelector("span").textContent = pausado ? "Retomar" : "Pausar";
+        botao.querySelector("i").className = pausado
+            ? "bi bi-play-fill me-1" : "bi bi-pause-fill me-1";
+        if (!pausado) buscar();
+    });
+
+    // Aba em segundo plano nao precisa de ciclo: economiza requisicao e,
+    // ao voltar, busca na hora em vez de mostrar um numero velho.
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) { if (timer) window.clearInterval(timer); timer = null; }
+        else { buscar(); reagendar(); }
+    });
+
+    buscar();
+    reagendar();
+})();
+</script>
+{% endblock %}

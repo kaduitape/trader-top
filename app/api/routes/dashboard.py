@@ -2256,3 +2256,99 @@ def dashboard_foto_analise(
         }
     )
     return templates.TemplateResponse(request, "dashboard/foto_analise.html", contexto)
+
+
+@router.get("/dashboard/pulso", response_class=HTMLResponse)
+def dashboard_pulso(
+    request: Request,
+    symbol: str | None = None,
+    timeframe: str = "M15",
+    take_ticks: int = 20,
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Pulso ao Vivo: o mesmo cenario da Foto Analise, se redesenhando.
+
+    A diferenca em relacao a Foto Analise nao e o conteudo — e a leitura.
+    Foto e um retrato que voce examina; Pulso e um monitor que voce deixa
+    aberto. Por isso ele troca so o grafico, sem recarregar a pagina: quem
+    esta acompanhando o mercado nao pode perder o scroll a cada ciclo.
+    """
+    simbolos = SymbolRepository(db).list_active()
+    return templates.TemplateResponse(
+        request,
+        "dashboard/pulso.html",
+        {
+            "user": user,
+            "symbols": simbolos,
+            "selected_symbol": symbol or (simbolos[0].name if simbolos else None),
+            "selected_timeframe": timeframe.upper(),
+            "timeframes": list(ANALYSIS_TIMEFRAMES),
+            "take_ticks": take_ticks,
+        },
+    )
+
+
+@router.get("/dashboard/foto-analise/live", response_class=JSONResponse)
+def dashboard_foto_analise_live(
+    symbol: str,
+    timeframe: str = "M15",
+    take_ticks: int = 20,
+    direction: str = "AUTO",
+    detail: str = "NORMAL",
+    view: str = "HEATMAP",
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Grafico + resumo, para atualizacao sem recarregar a pagina.
+
+    Devolve o SVG JA RENDERIZADO no servidor, e nao os dados crus. Redesenhar
+    no navegador exigiria uma segunda implementacao da mesma geometria — e
+    duas implementacoes divergem, em cima de dinheiro. Aqui o cliente so
+    troca o conteudo de um elemento.
+    """
+    del user
+    from app.api.routes.foto_analise import FotoAnaliseIn, build_foto
+    from app.foto_analise.annotations import ChartAnnotationService
+
+    try:
+        foto = build_foto(
+            db,
+            FotoAnaliseIn(
+                symbol=symbol,
+                timeframe=timeframe,
+                take_ticks=take_ticks,
+                direction=direction,
+                detail=detail,
+            ),
+        )
+    except HTTPException as exc:
+        return JSONResponse({"error": str(exc.detail)}, status_code=exc.status_code)
+
+    zona = foto.entry_zone
+    return JSONResponse(
+        {
+            "svg": ChartAnnotationService().render(
+                foto, show_heatmap=(view.upper() != "FOTO")
+            ),
+            "symbol": foto.symbol,
+            "timeframe": foto.timeframe.value,
+            "decision": foto.decision,
+            "bias": foto.bias,
+            "score": foto.score,
+            "price": foto.current_price,
+            "price_source": foto.price_source,
+            "status": foto.status,
+            "take": foto.take,
+            "stop": foto.stop,
+            "entry_min": zona.min if zona else None,
+            "entry_max": zona.max if zona else None,
+            "sweet_spot": zona.sweet_spot if zona else None,
+            "distance_ticks": zona.distance_ticks if zona else None,
+            "is_stale": foto.is_stale,
+            "data_age_minutes": foto.data_age_minutes,
+            "reasons_for": foto.reasons_for[:3],
+            "reasons_against": foto.reasons_against[:2],
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+    )

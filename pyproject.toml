@@ -16,8 +16,6 @@ dependencies = [
     "alembic>=1.13",
     "pymysql>=1.1",
     "cryptography>=43.0",
-    # Ponte para um MetaTrader sob Wine em outro container (app/mt5/bridge.py).
-    "rpyc>=6.0",
     "bcrypt>=4.1",
     "python-jose[cryptography]>=3.3",
     "python-multipart>=0.0.12",
@@ -38,8 +36,13 @@ dependencies = [
     # Ponte cliente para o terminal MT5 executado sob Wine no servico
     # `mt5-wine`. So e usada quando MT5_BRIDGE_HOST estiver configurado.
     "mt5linux==1.0.3",
-    # A imagem mt5-installed executa o servidor Windows com RPyC 5.2.3.
-    # RPyC 6 muda o protocolo e falha com "invalid message type: 18".
+    # Ponte para um MetaTrader sob Wine em outro container
+    # (app/mt5/bridge.py e o cliente mt5linux).
+    #
+    # PINADO, e nao `>=`: a imagem do servidor executa RPyC 5.2.3, e o
+    # RPyC 6 muda o protocolo — o sintoma e "invalid message type: 18"
+    # depois de a porta ja ter aceitado a conexao, que e o pior lugar
+    # possivel para descobrir uma incompatibilidade.
     "rpyc==5.2.3",
 ]
 

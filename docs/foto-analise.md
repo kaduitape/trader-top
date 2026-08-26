@@ -119,3 +119,34 @@ Os pesos de confluência do heatmap são **escolhas conservadoras, não
 parâmetros otimizados**. Não há backtest que os valide — o mesmo vale para
 `MIN_ZONE_SCORE = 62`. Eles ordenam regiões de forma coerente com a análise
 existente; não prometem resultado.
+
+## Pulso ao Vivo (`/dashboard/pulso`)
+
+Mesmo cenário, leitura diferente: **Foto** é um retrato que você examina;
+**Pulso** é um monitor que você deixa aberto.
+
+Ele troca só o gráfico, sem recarregar a página — quem acompanha o mercado
+não pode perder o scroll a cada ciclo. O endpoint
+`GET /dashboard/foto-analise/live` devolve o **SVG já renderizado no
+servidor** mais um resumo; redesenhar no navegador exigiria uma segunda
+implementação da mesma geometria, e duas implementações divergem em cima de
+dinheiro.
+
+Intervalo configurável (5s / 15s / 1min), botão de pausa, e o ciclo para
+quando a aba vai para segundo plano — voltando, busca na hora em vez de
+mostrar um número velho.
+
+### O que "ao vivo" significa aqui
+
+Não há WebSocket neste projeto, e o Pulso não cria um: ele relê o banco, no
+mesmo padrão de polling que `mt5.html` e `apexflow.html` já usam. Portanto é
+**tão atual quanto o coletor MT5** — se ele parar, o indicador fica vermelho
+("dados parados") e o gráfico ganha a tarja. Um ponto verde que só significa
+"o servidor respondeu" seria sinal de vida sobre dados mortos.
+
+### Zona de risco
+
+O stop era uma linha, e linha não comunica "dali para baixo o cenário
+acabou". Agora a região além do stop é pintada de vermelho, do lado correto
+da invalidação — abaixo numa compra, acima numa venda. Onde **não** estar era
+metade do pedido; a outra metade é onde entrar.

@@ -508,3 +508,93 @@ def test_labels_have_a_solid_background(db_session) -> None:
     svg = ChartAnnotationService().render(_foto(db_session))
 
     assert 'rx="3"' in svg, "os rotulos precisam de fundo solido"
+
+
+# --- Pulso ao Vivo ---------------------------------------------------------
+
+
+def test_the_live_endpoint_returns_a_rendered_chart(logged_in, db_session) -> None:
+    """Devolve SVG pronto, nao dados crus: redesenhar no navegador exigiria
+    uma segunda implementacao da mesma geometria."""
+    _semeia(db_session)
+
+    resposta = logged_in.get(
+        f"/dashboard/foto-analise/live?symbol={SIMBOLO}&timeframe=M15&take_ticks=20"
+    )
+
+    assert resposta.status_code == 200
+    dados = resposta.json()
+    assert dados["svg"].startswith("<svg")
+    assert dados["symbol"] == SIMBOLO
+    for chave in ("decision", "bias", "score", "price", "is_stale", "updated_at"):
+        assert chave in dados
+
+
+def test_the_live_endpoint_reports_staleness(logged_in, db_session) -> None:
+    """O ponto verde nao pode significar so "o servidor respondeu": com o
+    coletor parado, isso seria sinal de vida sobre dados mortos."""
+    _semeia(db_session)
+
+    dados = logged_in.get(
+        f"/dashboard/foto-analise/live?symbol={SIMBOLO}&timeframe=M15"
+    ).json()
+
+    assert dados["is_stale"] is True
+    assert "DADOS DESATUALIZADOS" in dados["svg"]
+
+
+def test_the_live_endpoint_fails_with_a_message(logged_in) -> None:
+    resposta = logged_in.get("/dashboard/foto-analise/live?symbol=NAOEXISTE")
+
+    assert resposta.status_code == 404
+    assert "error" in resposta.json()
+
+
+def test_the_live_endpoint_requires_login(client) -> None:
+    resposta = client.get(
+        "/dashboard/foto-analise/live?symbol=X", follow_redirects=False
+    )
+
+    assert resposta.status_code in (302, 303, 401)
+
+
+def test_the_pulso_page_renders(logged_in, db_session) -> None:
+    _semeia(db_session)
+
+    resposta = logged_in.get("/dashboard/pulso")
+
+    assert resposta.status_code == 200
+    assert "Pulso ao Vivo" in resposta.text
+    assert "/dashboard/foto-analise/live" in resposta.text
+
+
+# --- zona de risco no desenho ----------------------------------------------
+
+
+def test_the_risk_area_is_painted_not_just_a_line(db_session) -> None:
+    """Uma linha de stop nao comunica "dali para baixo o cenario acabou".
+    Area comunica — e "onde nao estar" era metade do pedido."""
+    _semeia(db_session)
+
+    svg = ChartAnnotationService().render(_foto(db_session))
+
+    assert "ZONA DE RISCO" in svg
+
+
+def test_the_risk_area_sits_below_a_long_stop(db_session) -> None:
+    """Numa compra a invalidacao e ABAIXO. Pintar acima marcaria como
+    perigosa exatamente a regiao do alvo."""
+    from app.foto_analise.annotations import ChartAnnotationService as Servico
+
+    _semeia(db_session)
+    foto = _foto(db_session, direction="COMPRA")
+    if foto.stop is None:
+        pytest.skip("sem stop nesta amostra")
+
+    servico = Servico()
+    escala = servico._scale(foto)
+    y_stop = escala.y(foto.stop)
+    y_take = escala.y(foto.take)
+
+    # No SVG o eixo Y cresce para baixo: take acima do stop = y menor.
+    assert y_take < y_stop

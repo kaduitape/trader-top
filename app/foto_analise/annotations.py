@@ -145,14 +145,53 @@ class ChartAnnotationService:
         base = escala.y(zona.min)
         largura = WIDTH - PADDING_LEFT - PADDING_RIGHT
 
-        return (
+        faixa = (
             f'<rect x="{PADDING_LEFT}" y="{topo:.1f}" width="{largura}" '
-            f'height="{max(abs(base - topo), 3):.1f}" fill="{cor}" opacity="0.20" '
-            f'stroke="{cor}" stroke-opacity="0.65"/>'
-            f'<text x="{PADDING_LEFT + 8}" y="{topo - 5:.1f}" fill="{cor}" '
-            f'font-size="12" font-weight="700">{rotulo} '
-            f"{_fmt(zona.min, foto.tick_size)}–{_fmt(zona.max, foto.tick_size)}</text>"
-            + self._star(foto, escala, zona.sweet_spot, cor)
+            f'height="{max(abs(base - topo), 3):.1f}" fill="{cor}" opacity="0.22" '
+            f'stroke="{cor}" stroke-opacity="0.7" stroke-width="1.5"/>'
+            + _badge(
+                PADDING_LEFT + 6,
+                topo - 4,
+                f"{rotulo} {_fmt(zona.min, foto.tick_size)}–{_fmt(zona.max, foto.tick_size)}",
+                cor,
+                tamanho=12,
+            )
+        )
+        return faixa + self._risk_area(foto, escala) + self._star(
+            foto, escala, zona.sweet_spot, cor
+        )
+
+    def _risk_area(self, foto: FotoAnalise, escala: _Scale) -> str:
+        """A regiao ALEM do stop, pintada de vermelho.
+
+        O stop ja era uma linha, e uma linha nao comunica "dali para baixo
+        o cenario acabou". Area comunica: o operador ve de relance onde
+        NAO estar, que era metade do pedido — a outra metade e onde entrar.
+
+        Vai do stop ate a borda do enquadramento, do lado da invalidacao.
+        """
+        if foto.stop is None:
+            return ""
+
+        comprando = foto.bias == "LONG"
+        y_stop = escala.y(foto.stop)
+        # Numa compra a invalidacao e ABAIXO: o retangulo desce ate o fim.
+        y0 = y_stop if comprando else PADDING_TOP
+        altura = (HEIGHT - PADDING_BOTTOM - y_stop) if comprando else (y_stop - PADDING_TOP)
+        if altura <= 0:
+            return ""
+
+        return (
+            f'<rect x="{PADDING_LEFT}" y="{y0:.1f}" '
+            f'width="{WIDTH - PADDING_LEFT - PADDING_RIGHT}" height="{altura:.1f}" '
+            'fill="#ef4444" opacity="0.14"/>'
+            + _badge(
+                PADDING_LEFT + 6,
+                y_stop + (16 if comprando else -4),
+                "ZONA DE RISCO",
+                "#ef4444",
+                tamanho=11,
+            )
         )
 
     def _star(self, foto: FotoAnalise, escala: _Scale, price: float, cor: str) -> str:
