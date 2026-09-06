@@ -65,6 +65,9 @@ opera — mas porque com o botão desligado o terminal não executa EA nenhum.
 | `TakeTicks` | take desejado — muda as zonas, não só o desenho |
 | `Direction` | `AUTO`, `COMPRA` ou `VENDA` |
 | `RefreshSeconds` | intervalo de consulta |
+| `ZoneTransparency` | 0–100; a cor é misturada com o fundo do gráfico |
+| `AlertOnReady` | avisa quando o preço entra na zona |
+| `PushOnReady` | também envia push (exige MetaQuotes ID no terminal) |
 
 ### O sufixo da corretora erra em silêncio
 
@@ -126,8 +129,10 @@ estéticas:
   arredondamento por tick, e duas formatações divergem: viraria dois preços
   diferentes para o mesmo nível.
 
-`contract_version` permite ao indicador avisar quando o servidor mudou de
-formato — melhor uma mensagem no gráfico do que zonas no lugar errado.
+`contract_version` é comparada pelo EA com a versão que ele entende
+(`CONTRACT_SUPPORTED`). Servidor à frente do indicador vira uma mensagem no
+gráfico pedindo recompilação — melhor isso do que zonas no lugar errado por
+um campo que mudou de nome.
 
 ### Desligado responde 200, não erro
 
@@ -170,3 +175,39 @@ cenário e avisa que ele envelheceu.
 O score é **confluência**, não probabilidade de lucro — a mesma ressalva de
 `docs/foto-analise.md`, e o `disclaimer` vai no payload para que ela chegue
 junto com os números.
+
+## Alerta de entrada pronta
+
+Com `AlertOnReady`, o EA dispara `Alert()` — e `SendNotification()` se
+`PushOnReady` estiver ligado — quando o status **muda** para `READY`.
+
+Na transição, não enquanto ela dura: um aviso repetido a cada 15 segundos
+vira ruído, e ruído é ignorado exatamente quando importa. Também não dispara
+com dados desatualizados — dado parado não é convite para operar — nem na
+primeira resposta depois de anexar o EA, que não é transição nenhuma.
+
+## Detalhes que custaram bug
+
+**O tick vem do painel, não do gráfico.** `g_tick_size` chega na resposta e é
+o que dimensiona a área de risco e as casas decimais. Usar o `_Point` do
+gráfico parece equivalente e não é: no MNQ o ponto é 0.01 e o tick é 0.25 —
+a área saía 25× menor, e continuava parecendo certa.
+
+**A headline sempre nomeia símbolo e timeframe.** Antes só o fazia quando
+desligado ou desatualizado, ou seja: o caso normal, em que tudo parece
+funcionar, era o único que não dizia de onde os números vinham. Com
+`SymbolOverride` errado, isso é a diferença entre notar e não notar.
+
+**Rolar o gráfico reancora as zonas sem consultar.** Os retângulos são
+presos à primeira barra visível; sem tratar `CHARTEVENT_CHART_CHANGE` eles
+ficavam para trás até o próximo ciclo.
+
+**Falha de rede espaça as tentativas** (dobra até 5 min, volta ao normal no
+primeiro sucesso) e **não apaga o desenho anterior**: um gráfico que se
+esvazia a cada oscilação de conexão é pior que um que mantém o último
+cenário e avisa que ele envelheceu.
+
+**Durante a consulta o botão espera.** `WebRequest` é síncrona e bloqueia a
+thread do EA; o clique não se perde, mas demora. O EA escreve "consultando o
+painel, aguarde" em vez de parecer morto — a espera é inerente à plataforma,
+não há como torná-la assíncrona.

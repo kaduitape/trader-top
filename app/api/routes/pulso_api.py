@@ -183,10 +183,18 @@ def _payload(foto, *, enabled: bool) -> dict:
 
 
 def _headline(foto, enabled: bool) -> str:
+    """Linha unica para a legenda do grafico.
+
+    O simbolo e o timeframe entram SEMPRE, e nao so nos casos de erro. Quem
+    configurou `SymbolOverride` errado ve niveis de outro ativo desenhados
+    sobre o seu grafico — e o caso normal, em que tudo parece funcionar, era
+    justamente o unico que nao dizia de onde os numeros vieram.
+    """
+    origem = f"{foto.symbol} {foto.timeframe.value}"
     if not enabled:
-        return f"{foto.symbol}: analise da IA DESLIGADA"
+        return f"{origem}: analise da IA DESLIGADA"
     if foto.is_stale:
-        return f"{foto.symbol}: DADOS DESATUALIZADOS ({foto.data_age_minutes:.0f} min)"
+        return f"{origem}: DADOS DESATUALIZADOS ({foto.data_age_minutes:.0f} min)"
     estados = {
         "READY": "ENTRADA AGORA",
         "WAIT_PULLBACK": "AGUARDAR PULLBACK",
@@ -194,7 +202,10 @@ def _headline(foto, enabled: bool) -> str:
         "NO_SETUP": "SEM ENTRADA BOA AGORA",
     }
     lado = "COMPRA" if foto.bias == "LONG" else "VENDA"
-    return f"{lado} {foto.score:.0f}/100 — {estados.get(foto.status, foto.status)}"
+    return (
+        f"{origem} | {lado} {foto.score:.0f}/100 — "
+        f"{estados.get(foto.status, foto.status)}"
+    )
 
 
 def _desligado(symbol: str, timeframe: Timeframe) -> dict:
@@ -223,7 +234,7 @@ def _desligado(symbol: str, timeframe: Timeframe) -> dict:
         "zones": [],
         "reasons_for": [],
         "reasons_against": [],
-        "headline": f"{symbol}: analise da IA DESLIGADA",
+        "headline": f"{symbol} {timeframe.value}: analise da IA DESLIGADA",
         "disclaimer": "Este indicador nao envia nem cancela ordens.",
     }
 

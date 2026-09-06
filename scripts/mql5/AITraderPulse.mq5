@@ -54,12 +54,24 @@ input bool   ShowRiskArea    = true;    // Area alem do stop
 input bool   ShowPanel       = true;    // Legenda no canto do grafico
 input int    ZoneTransparency = 85;     // 0-100 (maior = mais transparente)
 
+//--- Alertas
+input bool   AlertOnReady    = true;    // Avisar quando a entrada ficar pronta
+input bool   PushOnReady     = false;   // Tambem enviar push (MetaQuotes ID)
+
 #define PREFIX "AITP_"
+#define CONTRACT_SUPPORTED 1   // versao do contrato da API que este arquivo entende
 #define MAX_ZONES 64
 
 //--- Estado
 bool     g_enabled      = true;
 bool     g_last_ok      = false;
+bool     g_busy         = false;
+double   g_tick_size    = 0.0;
+int      g_version      = 0;
+string   g_status       = "";
+string   g_status_ant   = "";
+datetime g_next_try     = 0;
+int      g_falhas       = 0;
 string   g_headline     = "iniciando...";
 string   g_detail       = "";
 string   g_error        = "";
@@ -95,6 +107,7 @@ void OnDeinit(const int reason)
   {
    EventKillTimer();
    ClearObjects();
+   Comment("");
    ChartRedraw();
   }
 
@@ -108,8 +121,26 @@ void OnTimer()
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
   {
+   if(id == CHARTEVENT_CHART_CHANGE)
+     {
+      // Rolar ou dar zoom nao muda a analise, mas muda ONDE ela cabe na
+      // tela. Os retangulos sao ancorados na primeira barra visivel; sem
+      // reancorar, arrastar o grafico deixava as zonas para tras ate o
+      // proximo ciclo. Reancorar e local — nao gasta uma consulta.
+      Reanchor();
+      return;
+     }
+
    if(id != CHARTEVENT_OBJECT_CLICK || sparam != PREFIX + "toggle")
       return;
+
+   if(g_busy)
+     {
+      // `WebRequest` bloqueia a thread do EA; o clique nao se perde, so
+      // espera. Dizer isso e melhor que um botao que parece morto.
+      Comment("AITraderPulse: consultando o painel, aguarde...");
+      return;
+     }
 
    // O botao volta sozinho ao estado nao-pressionado: quem manda no rotulo
    // e a RESPOSTA do servidor, nao o clique. Se a chamada falhar, o botao
@@ -264,10 +295,23 @@ void Fetch()
   {
    if(StringLen(ApiKey) == 0)
       return;
+   if(g_busy)
+      return;
+   if(g_next_try > 0 && TimeCurrent() < g_next_try)
+      return;   // ainda dentro do backoff
 
+   g_busy = true;
    string json = HttpGet(BuildUrl());
+   g_busy = false;
+   Comment("");
+
    if(StringLen(json) == 0)
      {
+      // Backoff: com o painel fora do ar, repetir no mesmo ritmo so enche o
+      // log. Dobra ate 5 minutos e volta ao normal no primeiro sucesso.
+      g_falhas++;
+      int espera = (int)MathMin(300, RefreshSeconds * MathPow(2, MathMin(5, g_falhas)));
+      g_next_try = TimeCurrent() + espera;
       // Erro de rede NAO apaga o desenho anterior de proposito: um grafico
       // que se esvazia a cada oscilacao de conexao e pior que um que
       // mantem o ultimo cenario e avisa que ele envelheceu.
@@ -277,15 +321,35 @@ void Fetch()
       return;
      }
 
+   g_next_try = 0;
+
    g_last_ok    = true;
+   g_falhas     = 0;
    g_last_fetch = TimeCurrent();
    g_enabled    = JsonBool(json, "enabled");
    g_headline   = JsonRaw(json, "headline");
+   g_version    = (int)JsonNum(json, "contract_version");
+
+   // O tick vem do PAINEL, nao do grafico. Sao diferentes com frequencia:
+   // no MNQ o `_Point` e 0.01 e o tick e 0.25. Usar o do grafico
+   // encolheria a area de risco em 25x, e ela continuaria parecendo certa.
+   double tick = JsonNum(json, "tick_size");
+   g_tick_size = (tick > 0.0) ? tick : _Point;
+
+   if(g_version > CONTRACT_SUPPORTED)
+     {
+      g_error = "Painel atualizado (contrato v" + IntegerToString(g_version)
+                + "). Recompile o AITraderPulse.";
+      DrawPanel();
+      return;
+     }
 
    ClearZones();
 
    if(!g_enabled)
      {
+      g_status     = "DISABLED";
+      g_status_ant = "DISABLED";
       g_detail = "Clique em LIGAR para voltar a receber a analise.";
       DrawPanel();
       UpdateButton();
@@ -338,10 +402,42 @@ void Fetch()
       DrawLevel("decision", nivel, clrMediumPurple, STYLE_DOT, 1,
                 "DECISION LEVEL " + FormatPrice(nivel));
 
+   g_status_ant = g_status;
+   g_status     = JsonRaw(json, "status");
+
+   NotifyIfReady(velho, comprando);
+
    g_detail = BuildDetail(velho, temEntrada, distancia, json);
    DrawPanel();
    UpdateButton();
    ChartRedraw();
+  }
+
+//+------------------------------------------------------------------+
+//| Alerta de entrada pronta                                          |
+//|                                                                   |
+//| Sem isto o indicador e passivo: so serve para quem esta olhando na|
+//| hora certa. O alerta dispara na TRANSICAO para READY, nao enquanto|
+//| ele durar — um aviso repetido a cada 15s vira ruido, e ruido e    |
+//| ignorado exatamente quando importa.                               |
+//+------------------------------------------------------------------+
+void NotifyIfReady(const bool velho, const bool comprando)
+  {
+   if(!AlertOnReady || g_status != "READY")
+      return;
+   if(g_status_ant == "READY" || StringLen(g_status_ant) == 0)
+      return;   // ja estava pronto, ou e a primeira resposta apos anexar
+
+   if(velho)
+      return;   // dados parados nao viram convite para operar
+
+   string aviso = g_symbol + " " + g_timeframe + ": "
+                  + (comprando ? "COMPRA" : "VENDA")
+                  + " pronta - preco dentro da zona";
+
+   Alert(aviso);
+   if(PushOnReady)
+      SendNotification(aviso);
   }
 
 string BuildDetail(const bool velho, const bool temEntrada, const int distancia,
@@ -414,7 +510,7 @@ void DrawZone(const string id, const double p1, const double p2, const color cor
    ObjectSetDouble(0, nome, OBJPROP_PRICE, 0, p1);
    ObjectSetInteger(0, nome, OBJPROP_TIME, 1, t2);
    ObjectSetDouble(0, nome, OBJPROP_PRICE, 1, p2);
-   ObjectSetInteger(0, nome, OBJPROP_COLOR, cor);
+   ObjectSetInteger(0, nome, OBJPROP_COLOR, Fade(cor));
    ObjectSetInteger(0, nome, OBJPROP_FILL, true);
    ObjectSetInteger(0, nome, OBJPROP_BACK, true);
    ObjectSetInteger(0, nome, OBJPROP_SELECTABLE, false);
@@ -428,9 +524,10 @@ void DrawRiskArea(const double stop, const bool comprando)
   {
    // Numa compra a invalidacao e ABAIXO. Pintar do lado errado marcaria
    // como perigosa exatamente a regiao do alvo.
-   double limite = comprando
-                   ? stop - 100 * _Point * MathMax(1, TakeTicks)
-                   : stop + 100 * _Point * MathMax(1, TakeTicks);
+   // `g_tick_size` vem do painel. O `_Point` do grafico nao serve: no MNQ
+   // ele e 0.01 contra um tick de 0.25, e a area sairia 25x menor.
+   double alcance = MathMax(g_tick_size, _Point) * MathMax(1, TakeTicks) * 10;
+   double limite = comprando ? stop - alcance : stop + alcance;
 
    string nome = PREFIX + "risk";
    datetime t1 = ChartFirstVisibleTime();
@@ -443,7 +540,7 @@ void DrawRiskArea(const double stop, const bool comprando)
    ObjectSetDouble(0, nome, OBJPROP_PRICE, 0, stop);
    ObjectSetInteger(0, nome, OBJPROP_TIME, 1, t2);
    ObjectSetDouble(0, nome, OBJPROP_PRICE, 1, limite);
-   ObjectSetInteger(0, nome, OBJPROP_COLOR, clrFireBrick);
+   ObjectSetInteger(0, nome, OBJPROP_COLOR, Fade(clrFireBrick));
    ObjectSetInteger(0, nome, OBJPROP_FILL, true);
    ObjectSetInteger(0, nome, OBJPROP_BACK, true);
    ObjectSetInteger(0, nome, OBJPROP_SELECTABLE, false);
@@ -551,6 +648,31 @@ void UpdateButton()
 //+------------------------------------------------------------------+
 //| Limpeza                                                           |
 //+------------------------------------------------------------------+
+//--- Reposiciona os retangulos na janela visivel atual, sem consultar.
+void Reanchor()
+  {
+   datetime t1 = ChartFirstVisibleTime();
+   datetime t2 = TimeCurrent() + PeriodSeconds(_Period) * 30;
+   datetime tag = TimeCurrent() + PeriodSeconds(_Period) * 3;
+
+   for(int i = ObjectsTotal(0) - 1; i >= 0; i--)
+     {
+      string nome = ObjectName(0, i);
+      if(StringFind(nome, PREFIX) != 0)
+         continue;
+
+      long tipo = ObjectGetInteger(0, nome, OBJPROP_TYPE);
+      if(tipo == OBJ_RECTANGLE)
+        {
+         ObjectSetInteger(0, nome, OBJPROP_TIME, 0, t1);
+         ObjectSetInteger(0, nome, OBJPROP_TIME, 1, t2);
+        }
+      else if(tipo == OBJ_TEXT)
+         ObjectSetInteger(0, nome, OBJPROP_TIME, tag);
+     }
+   ChartRedraw();
+  }
+
 void ClearZones()
   {
    // Apaga so o desenho da analise; o painel e o botao sobrevivem, porque
@@ -588,9 +710,44 @@ datetime ChartFirstVisibleTime()
    return(TimeCurrent() - PeriodSeconds(_Period) * 100);
   }
 
+//--- Mistura a cor com o fundo do grafico.
+//
+//  `ZoneTransparency` era um input MORTO: existia na tela de propriedades e
+//  nao fazia nada. ARGB em OBJ_RECTANGLE depende da build do terminal, entao
+//  a mistura e calculada aqui — funciona em qualquer versao e o resultado e
+//  o mesmo em tema claro ou escuro, porque parte do fundo real.
+color Fade(const color cor)
+  {
+   int alpha = MathMax(0, MathMin(100, ZoneTransparency));
+   color fundo = (color)ChartGetInteger(0, CHART_COLOR_BACKGROUND);
+
+   int r = ((cor & 0x0000FF)) * (100 - alpha) / 100 + ((fundo & 0x0000FF)) * alpha / 100;
+   int g = ((cor >> 8) & 0x00FF) * (100 - alpha) / 100 + ((fundo >> 8) & 0x00FF) * alpha / 100;
+   int b = ((cor >> 16) & 0x00FF) * (100 - alpha) / 100 + ((fundo >> 16) & 0x00FF) * alpha / 100;
+
+   return((color)(r | (g << 8) | (b << 16)));
+  }
+
 string FormatPrice(const double preco)
   {
-   return(DoubleToString(preco, _Digits));
+   // Casas derivadas do tick do PAINEL. Com `SymbolOverride` apontando para
+   // outro ativo, os `_Digits` do grafico truncariam o preco do simbolo
+   // analisado — 1.10345 viraria 1.10 num grafico de indice.
+   int casas = _Digits;
+   if(g_tick_size > 0.0 && g_tick_size < 1.0)
+     {
+      casas = 0;
+      double t = g_tick_size;
+      while(t < 1.0 && casas < 8)
+        {
+         t *= 10.0;
+         casas++;
+        }
+     }
+   else if(g_tick_size >= 1.0)
+      casas = 0;
+
+   return(DoubleToString(preco, casas));
   }
 
 string PeriodToName(const ENUM_TIMEFRAMES periodo)

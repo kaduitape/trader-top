@@ -375,3 +375,46 @@ def test_the_route_never_touches_orders() -> None:
 
     for proibido in ("app.execution", "app.paper_trading", "app.mt5.orders"):
         assert not any(m.startswith(proibido) for m in importados), proibido
+
+
+# --- a headline diz de onde vieram os numeros ------------------------------
+
+
+def test_the_headline_always_names_symbol_and_timeframe(client, db_session, chave) -> None:
+    """`SymbolOverride` errado desenha niveis de outro ativo no grafico. O
+    caso normal — em que tudo parece funcionar — era o unico que nao dizia
+    de onde os numeros vieram."""
+    _semeia(db_session)
+
+    dados = client.get(
+        f"/api/pulso?symbol={SIMBOLO}&timeframe=M15", headers=_cabecalho(chave)
+    ).json()
+
+    assert SIMBOLO in dados["headline"]
+    assert "M15" in dados["headline"]
+
+
+def test_the_disabled_headline_also_names_the_origin(client, db_session, chave) -> None:
+    _semeia(db_session)
+    client.post(
+        "/api/pulso/toggle",
+        json={"symbol": SIMBOLO, "enabled": False},
+        headers=_cabecalho(chave),
+    )
+
+    dados = client.get(
+        f"/api/pulso?symbol={SIMBOLO}&timeframe=M15", headers=_cabecalho(chave)
+    ).json()
+
+    assert SIMBOLO in dados["headline"]
+    assert "M15" in dados["headline"]
+
+
+def test_the_tick_size_reaches_the_indicator(client, db_session, chave) -> None:
+    """O EA usa este valor para dimensionar a area de risco. Com o `_Point`
+    do grafico no lugar dele, num MNQ a area sai 25x menor."""
+    _semeia(db_session)
+
+    dados = client.get(f"/api/pulso?symbol={SIMBOLO}", headers=_cabecalho(chave)).json()
+
+    assert dados["tick_size"] == 0.25
