@@ -42,6 +42,7 @@ from app.database.models.user import User
 from app.database.repositories.apexflow_decision_repository import (
     ApexFlowDecisionRepository,
 )
+from app.database.repositories.api_token_repository import ApiTokenRepository
 from app.database.repositories.audit_log_repository import AuditLogRepository
 from app.database.repositories.candle_repository import CandleRepository
 from app.database.repositories.drift_event_repository import DriftEventRepository
@@ -1640,6 +1641,7 @@ def dashboard_settings_hub(
     db: Session = Depends(get_db),
     saved: str | None = None,
     error: str | None = None,
+    new_token: str | None = None,
 ) -> HTMLResponse:
     """Indice de tudo que se configura, com o estado de cada area.
 
@@ -1683,6 +1685,8 @@ def dashboard_settings_hub(
             "broker": settings.broker,
             "calendar_file": settings.calendar_file_path or "",
             "calendar_policy": load_calendar_policy(db, settings),
+            "api_tokens": ApiTokenRepository(db).list_all(),
+            "new_api_token": new_token,
             "mt5_credential": credencial_mt5,
             "mt5_password_mask": MASK,
             "mt5_bridge": describe_target(mt5_bridge_host, mt5_bridge_port),
@@ -2351,4 +2355,65 @@ def dashboard_foto_analise_live(
             "reasons_against": foto.reasons_against[:2],
             "updated_at": datetime.now(UTC).isoformat(),
         }
+    )
+
+
+@router.post("/dashboard/settings/api-tokens")
+def dashboard_api_token_create(
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+    name: str = Form(""),
+) -> RedirectResponse:
+    """Gera uma chave. Ela aparece UMA vez, no redirecionamento.
+
+    Nao ha "ver de novo": se o sistema conseguisse mostrar a chave depois,
+    um vazamento do banco tambem conseguiria. Perdeu, revoga e gera outra —
+    e essa e a operacao barata, nao a perda.
+    """
+    repo = ApiTokenRepository(db)
+    registro, segredo = repo.create(name=name or "Indicador MT5", user_id=user.id)
+
+    AuditLogRepository(db).record(
+        action="api_token_create",
+        entity="api_tokens",
+        # Prefixo sim, chave nunca — nem no log que registra a criacao dela.
+        detail=f"chave '{registro.name}' ({registro.prefix}…) criada por {user.username}",
+        user_id=user.id,
+    )
+    db.commit()
+
+    return RedirectResponse(
+        url="/dashboard/settings?new_token=" + quote(segredo) + "#api-tokens",
+        status_code=303,
+    )
+
+
+@router.post("/dashboard/settings/api-tokens/{token_id}/revoke")
+def dashboard_api_token_revoke(
+    token_id: int,
+    user: User = Depends(get_current_user_for_web),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Revoga sem apagar: a auditoria precisa continuar podendo explicar o
+    que aquela chave fez enquanto valia."""
+    repo = ApiTokenRepository(db)
+    registro = repo.revoke(token_id)
+    if registro is None:
+        return RedirectResponse(
+            url="/dashboard/settings?error=" + quote("chave nao encontrada."),
+            status_code=303,
+        )
+
+    AuditLogRepository(db).record(
+        action="api_token_revoke",
+        entity="api_tokens",
+        detail=f"chave '{registro.name}' ({registro.prefix}…) revogada por {user.username}",
+        user_id=user.id,
+    )
+    db.commit()
+    return RedirectResponse(
+        url="/dashboard/settings?saved="
+        + quote(f"Chave '{registro.name}' revogada. O indicador que a usava vai parar.")
+        + "#api-tokens",
+        status_code=303,
     )

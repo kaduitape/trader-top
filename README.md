@@ -799,6 +799,9 @@ para as fases correspondentes.
 - `docs/runbook.md` — procedimentos operacionais práticos: instalação,
   rotina de operação, checagens periódicas e resposta a incidentes
   (Fase 15).
+- `docs/indicador-mt5.md` — indicador (EA) que desenha as zonas do painel
+  no gráfico do MetaTrader, a API de chaves que o autentica e o botão de
+  ligar/desligar a análise da IA.
 - `docs/foto-analise.md` — FotoAnálise: camada visual sobre a análise
   existente (mapa de calor de confluência, zona de entrada, sweet spot),
   o que reaproveita e por que o score não é probabilidade de lucro.

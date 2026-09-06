@@ -29,6 +29,112 @@
 {% endif %}
 
 <div class="row g-4">
+    <div class="col-xl-12" id="api-tokens">
+        <section class="card">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <span><i class="bi bi-key-fill me-2"></i>Chaves de API — indicador MetaTrader</span>
+                <span class="badge text-bg-secondary">{{ api_tokens|length }} cadastrada(s)</span>
+            </div>
+            <div class="card-body p-4">
+                {% if new_api_token %}
+                <div class="tp-context-note mb-4" style="border-color:#22c55e">
+                    <i class="bi bi-clipboard-check"></i>
+                    <div>
+                        <strong>Copie agora — ela não aparece de novo.</strong>
+                        <div class="input-group mt-2">
+                            <input type="text" class="form-control font-monospace" readonly
+                                   id="tp-new-token" value="{{ new_api_token }}">
+                            <button class="btn btn-outline-light" type="button" id="tp-copy-token">
+                                <i class="bi bi-clipboard"></i>
+                            </button>
+                        </div>
+                        <div class="form-text">
+                            Guardada como hash no banco. Se o sistema conseguisse
+                            mostrá-la de novo, um vazamento do banco também conseguiria.
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="row g-4">
+                    <div class="col-lg-5">
+                        <form method="post" action="/dashboard/settings/api-tokens">
+                            <label for="token_name" class="form-label fw-semibold">Nome da chave</label>
+                            <input type="text" class="form-control mb-2" id="token_name" name="name"
+                                   maxlength="80" placeholder="Indicador MT5 — notebook">
+                            <div class="form-text mb-3">
+                                Um nome por máquina. Assim dá para revogar a certa quando
+                                um computador sai de uso.
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-plus-lg me-2"></i>Gerar chave
+                            </button>
+                        </form>
+
+                        <div class="tp-context-note mt-4">
+                            <i class="bi bi-shield-lock"></i>
+                            <div>
+                                A chave dá acesso de <strong>leitura da análise</strong> e ao
+                                liga/desliga do desenho. Ela <strong>não</strong> envia ordens,
+                                não muda o modo do sistema e não lê credenciais.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-lg-7">
+                        {% if api_tokens %}
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Nome</th><th>Início</th><th>Último uso</th>
+                                        <th class="text-end">Ações</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                {% for chave in api_tokens %}
+                                <tr class="{% if not chave.is_active %}opacity-50{% endif %}">
+                                    <td>
+                                        {{ chave.name }}
+                                        {% if not chave.is_active %}
+                                        <span class="badge text-bg-secondary ms-1">revogada</span>
+                                        {% endif %}
+                                    </td>
+                                    <td><code>{{ chave.prefix }}…</code></td>
+                                    <td class="small text-muted">
+                                        {%- if chave.last_used_at -%}
+                                        {{ chave.last_used_at.strftime("%d/%m %H:%M") }}
+                                        ({{ chave.request_count }}x)
+                                        {%- else -%}nunca{%- endif -%}
+                                    </td>
+                                    <td class="text-end">
+                                        {% if chave.is_active %}
+                                        <form method="post"
+                                              action="/dashboard/settings/api-tokens/{{ chave.id }}/revoke"
+                                              class="d-inline">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                Revogar
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <p class="text-muted mb-0">
+                            Nenhuma chave ainda. Gere uma para conectar o indicador
+                            <code>AITraderPulse</code> ao painel.
+                        </p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
     <div class="col-xl-6">
         <section class="card h-100">
             <div class="card-header"><i class="bi bi-robot me-2"></i>Operação do robô</div>
@@ -539,6 +645,19 @@
 
         // Evita testes simultaneos: a requisicao espera o worker responder e
         // pode levar dezenas de segundos, tempo de sobra para clicar de novo.
+        const copiar = document.getElementById("tp-copy-token");
+        if (copiar) {
+            copiar.addEventListener("click", () => {
+                const campo = document.getElementById("tp-new-token");
+                campo.select();
+                // `navigator.clipboard` exige contexto seguro (HTTPS); o painel
+                // costuma rodar em HTTP na VPS, entao `execCommand` fica como
+                // caminho principal, nao como remendo.
+                try { document.execCommand("copy"); } catch (e) { /* seleção basta */ }
+                copiar.innerHTML = '<i class="bi bi-check-lg"></i>';
+            });
+        }
+
         const form = document.getElementById("mt5-test-form");
         const teste = document.getElementById("mt5-test-button");
         if (form && teste) {

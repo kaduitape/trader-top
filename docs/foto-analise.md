@@ -150,3 +150,9 @@ O stop era uma linha, e linha não comunica "dali para baixo o cenário
 acabou". Agora a região além do stop é pintada de vermelho, do lado correto
 da invalidação — abaixo numa compra, acima numa venda. Onde **não** estar era
 metade do pedido; a outra metade é onde entrar.
+
+## Consumo fora do painel
+
+O mesmo cenário sai por `GET /api/pulso`, num formato desenhado para MQL5
+(objeto raso, sem `null`, zonas planas). É o que o indicador
+`AITraderPulse` consome — ver `docs/indicador-mt5.md`.
