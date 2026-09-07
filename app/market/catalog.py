@@ -1,4 +1,4 @@
-"""Catalogo curado de Forex e metais para descoberta no dashboard.
+"""Catalogo curado de Forex, metais e índices para descoberta no dashboard.
 
 O catalogo nao cria simbolos negociaveis nem inventa especificacoes. Ele
 apenas reconcilia nomes conhecidos com os simbolos reais sincronizados do
@@ -12,7 +12,7 @@ from typing import Literal
 
 from app.database.models.symbol import Symbol
 
-MarketGroup = Literal["MAJORS", "CROSSES", "EXOTICS", "METALS"]
+MarketGroup = Literal["MAJORS", "CROSSES", "EXOTICS", "METALS", "INDICES"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +68,12 @@ MARKET_CATALOG: tuple[MarketInstrument, ...] = (
     MarketInstrument("USDMXN", "Dolar / Peso Mexicano", "EXOTICS", "USD", "MXN"),
     MarketInstrument("XAUUSD", "Ouro / Dolar", "METALS", "XAU", "USD", "bi-gem"),
     MarketInstrument("XAGUSD", "Prata / Dolar", "METALS", "XAG", "USD", "bi-gem"),
+    # USTEC é o nome oferecido pelo terminal conectado à produção. O índice
+    # é cotado em USD, mas não é um par de moedas; o calendário considera
+    # somente os eventos americanos para este ativo.
+    MarketInstrument(
+        "USTEC", "US Tech 100 Index", "INDICES", "USTEC", "USD", "bi-graph-up-arrow"
+    ),
 )
 
 GROUP_LABELS: dict[MarketGroup, str] = {
@@ -75,6 +81,7 @@ GROUP_LABELS: dict[MarketGroup, str] = {
     "MAJORS": "Pares principais",
     "CROSSES": "Pares cruzados",
     "EXOTICS": "Pares exoticos",
+    "INDICES": "Índices",
 }
 
 
@@ -124,6 +131,7 @@ def grouped_availability(
         "MAJORS": [],
         "CROSSES": [],
         "EXOTICS": [],
+        "INDICES": [],
     }
     for availability in catalog_availability(symbols):
         grouped[availability.instrument.group].append(availability)

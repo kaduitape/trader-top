@@ -166,6 +166,11 @@ def test_gold_maps_only_to_the_quote_currency() -> None:
     assert currencies_for_symbol("XAUUSD") == frozenset({"USD"})
 
 
+def test_us_tech_index_maps_only_to_usd_events() -> None:
+    """USTEC é um índice, não um par; eventos americanos são os relevantes."""
+    assert currencies_for_symbol("USTEC") == frozenset({"USD"})
+
+
 def test_a_broker_suffix_is_tolerated() -> None:
     assert currencies_for_symbol("EURUSD.r") == frozenset({"EUR", "USD"})
     assert currencies_for_symbol("XAUUSD_i") == frozenset({"USD"})

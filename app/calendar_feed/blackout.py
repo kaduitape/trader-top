@@ -23,7 +23,7 @@ from app.market.catalog import MARKET_CATALOG
 # Metais nao tem "moeda base" no sentido macro: XAU nao tem banco central.
 # O que move ouro e prata e a economia americana, entao o lado que importa
 # e o de cotacao.
-_NON_MONETARY_BASES = frozenset({"XAU", "XAG", "XPT", "XPD"})
+_NON_MONETARY_BASES = frozenset({"XAU", "XAG", "XPT", "XPD", "USTEC"})
 
 _CATALOG_BY_CODE = {item.code: item for item in MARKET_CATALOG}
 
