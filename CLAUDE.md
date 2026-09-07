@@ -35,6 +35,10 @@ símbolo não apaga os ticks dele.
 
 ## Infraestrutura da VPS
 
+- O painel é público em **`https://trader-top.navit.com.br`**, roteado pelo
+  Traefik. A porta 8000 escuta só em `127.0.0.1` — `http://<ip>:8000` não
+  alcança mais nada de fora. Qualquer instrução com a URL antiga está errada.
+
 - O MetaTrader roda no container `metatrader-5-9p2b-mt5-1`
   (imagem `gmag11/metatrader5_vnc`), **fora** do projeto `trader-top`. O
   servidor RPyC dele é a porta **8001**, não 18812; a 3000 é o noVNC.
