@@ -54,7 +54,11 @@ para rodar `docker compose build app`.
 
 **3. Libere a URL do painel** — Ferramentas → Opções → Expert Advisors →
 marque *"Permitir WebRequest para as URLs listadas"* e adicione a URL exata
-do painel (ex.: `http://179.198.104.46:8000`).
+do painel: `https://trader-top.navit.com.br`.
+
+A URL tem que ser **exata**, incluindo o esquema. O painel deixou de ser
+alcançável por `http://<ip>:8000` — a porta 8000 agora escuta só em
+`127.0.0.1` e o acesso público passa pelo Traefik com TLS.
 
 **Sem esse passo nada funciona.** `WebRequest` devolve `-1` com erro `4014` e
 o gráfico fica vazio. É a causa número um de "não funciona" — o EA detecta
@@ -69,7 +73,7 @@ opera — mas porque com o botão desligado o terminal não executa EA nenhum.
 
 | Campo | Para quê |
 |---|---|
-| `ApiUrl` | URL do painel, **sem barra no fim** |
+| `ApiUrl` | URL do painel, **sem barra no fim** (`https://trader-top.navit.com.br`) |
 | `ApiKey` | a chave gerada no passo 1 |
 | `SymbolOverride` | nome do símbolo **no painel** (vazio = o do gráfico) |
 | `TimeframeOverride` | M1…MN1 (vazio = o do gráfico) |
@@ -163,8 +167,9 @@ o preço de hoje — e o gráfico não teria como saber.
 - Revogar tem efeito imediato: a validação consulta o banco a cada requisição.
 - O segredo nunca volta pela API, nem no log de auditoria — o registro guarda
   só o prefixo (`tt_abcde…`), que identifica sem revelar.
-- Se o painel estiver exposto à internet, use HTTPS. `X-API-Key` em HTTP
-  trafega em claro, e quem capturar a chave passa a poder ler suas análises.
+- O painel é servido por HTTPS (Traefik, `trader-top.navit.com.br`), então a
+  chave não trafega em claro. Se algum dia voltar a ser exposto por HTTP puro,
+  `X-API-Key` viaja legível e quem capturar passa a ler suas análises.
 
 ## Quando não desenha nada
 
