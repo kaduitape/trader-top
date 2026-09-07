@@ -112,7 +112,16 @@ services:
       # porta 18812 no host. Sem isto, esse nome nao resolve no Linux.
       - "host.docker.internal:host-gateway"
     ports:
-      - "${APP_PORT:-8000}:8000"
+      # A API é pública somente pelo Traefik. A porta local continua
+      # disponível para health checks e integrações que rodam neste host.
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.trader-top.rule=Host(`trader-top.navit.com.br`)"
+      - "traefik.http.routers.trader-top.entrypoints=websecure"
+      - "traefik.http.routers.trader-top.tls=true"
+      - "traefik.http.routers.trader-top.tls.certresolver=letsencrypt"
+      - "traefik.http.services.trader-top.loadbalancer.server.port=8000"
     volumes:
       - ./logs:/app/logs
       - ./models:/app/models
