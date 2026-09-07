@@ -47,6 +47,7 @@ class SymbolRepository:
                 description=spec.description,
                 digits=spec.digits,
                 point=_decimal(spec.point),
+                trade_tick_size=_decimal(spec.trade_tick_size or spec.point),
                 volume_min=_decimal(spec.volume_min),
                 volume_max=_decimal(spec.volume_max),
                 volume_step=_decimal(spec.volume_step),
@@ -58,6 +59,7 @@ class SymbolRepository:
             symbol.description = spec.description
             symbol.digits = spec.digits
             symbol.point = _decimal(spec.point)
+            symbol.trade_tick_size = _decimal(spec.trade_tick_size or spec.point)
             symbol.volume_min = _decimal(spec.volume_min)
             symbol.volume_max = _decimal(spec.volume_max)
             symbol.volume_step = _decimal(spec.volume_step)

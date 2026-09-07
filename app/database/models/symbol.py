@@ -20,6 +20,12 @@ class Symbol(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     digits: Mapped[int] = mapped_column(Integer, nullable=False)
     point: Mapped[Decimal] = mapped_column(Numeric(18, 10), nullable=False)
+    # Nao confundir com `point`: e o menor incremento negociavel do preco.
+    # O default preserva bancos ainda nao sincronizados apos a migracao; o
+    # repositorio preenche o fallback com `point` ao salvar uma especificacao.
+    trade_tick_size: Mapped[Decimal] = mapped_column(
+        Numeric(18, 10), nullable=False, default=Decimal("0")
+    )
     volume_min: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     volume_max: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     volume_step: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)

@@ -40,8 +40,8 @@ significa "as confluencias precisam somar algo real", nada mais."""
 
 
 class EntryStatus(enum.StrEnum):
-    READY = "READY"
-    """Preco atual dentro da zona: a entrada e agora."""
+    IN_ZONE = "IN_ZONE"
+    """Preco atual dentro da zona; ainda falta a confirmacao do cenario."""
 
     WAIT_PULLBACK = "WAIT_PULLBACK"
     """A zona esta abaixo do preco (compra) ou acima (venda)."""
@@ -66,7 +66,10 @@ class EntryZone:
 
     @property
     def is_actionable(self) -> bool:
-        return self.status == EntryStatus.READY
+        # Estar dentro da faixa responde apenas "onde o preco esta". A
+        # decisao de entrada pertence ao servico, que tambem conhece a
+        # confirmacao da candle e a recomendacao da analise principal.
+        return self.status == EntryStatus.IN_ZONE
 
 
 class EntryZoneEngine:
@@ -165,7 +168,7 @@ class EntryZoneEngine:
         self, *, comprando: bool, current_price: float, low: float, high: float
     ) -> EntryStatus:
         if low <= current_price <= high:
-            return EntryStatus.READY
+            return EntryStatus.IN_ZONE
         if comprando:
             # Zona abaixo do preco: espera-se o recuo ate ela. Zona ACIMA
             # significa que o preco ja saiu de la para cima — comprar agora

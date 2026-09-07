@@ -109,6 +109,14 @@ class FotoAnalise:
     reasons_for: list[str] = field(default_factory=list)
     reasons_against: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    price_at: datetime | None = None
+    """Horario da cotacao usada em ``current_price`` (tick ou candle)."""
+    spread_ticks: float | None = None
+    """Spread observado no tick, em ticks negociaveis; ausente sem tick."""
+    risk_reward: float | None = None
+    """Relacao bruta entre alvo e invalidacao, antes de comissoes."""
+    setup_id: str = ""
+    """Identifica um cenario para que o terminal nao repita alertas."""
 
 
 class FotoAnaliseService:
@@ -160,8 +168,10 @@ class FotoAnaliseService:
             )
 
         agora = now or datetime.now().astimezone()
-        current_price, fonte_preco = self._latest_price(symbol, candles, agora)
-        idade, velho = self._data_age(candles[-1].time, timeframe, agora)
+        current_price, fonte_preco, preco_em, spread_ticks = self._latest_price(
+            symbol, candles, agora, tick_size
+        )
+        idade, velho = self._data_age(preco_em, timeframe, agora)
         features = primary.features if primary is not None else None
         atr = _last_float(features, "atr_14") or (current_price * 0.002)
 
@@ -187,24 +197,34 @@ class FotoAnaliseService:
 
         heatmap = OpportunityHeatmapEngine(detail=self._detail).build(entradas)
         vies = self._resolve_bias(direction, report)
-        zona = EntryZoneEngine().build(
-            heatmap,
-            direction=vies,
-            current_price=current_price,
-            tick_size=tick_size,
+        zona = (
+            EntryZoneEngine().build(
+                heatmap,
+                direction=vies,
+                current_price=current_price,
+                tick_size=tick_size,
+            )
+            if vies is not None
+            else None
         )
 
         nivel_decisao = self._decision_level(heatmap, current_price)
         stop, take = self._stop_and_take(zona, vies, take_ticks, tick_size, report)
-        decisao, status = self._decide(zona, vies)
+        decisao, status = self._decide(zona, vies, report, candles)
+        retorno_risco = self._risk_reward(zona, stop, take)
         favor, contra = self._reasons(report, entradas, vies)
+        setup_id = self._setup_id(symbol, timeframe, vies, zona, candles[-1].time)
 
         return FotoAnalise(
             symbol=symbol,
             timeframe=timeframe,
             generated_at=report.generated_at,
             decision=decisao,
-            bias="LONG" if vies == SignalDirection.LONG else "SHORT",
+            bias=(
+                "LONG"
+                if vies == SignalDirection.LONG
+                else "SHORT" if vies == SignalDirection.SHORT else "NEUTRAL"
+            ),
             score=round(report.score.total_score, 1),
             current_price=current_price,
             take_ticks=take_ticks,
@@ -219,11 +239,15 @@ class FotoAnaliseService:
             levels=self._levels(zona, stop, take, suportes, resistencias, nivel_decisao),
             reasons_for=favor,
             reasons_against=contra,
-            warnings=self._warnings(report, velho, idade),
+            warnings=self._warnings(report, velho, idade, spread_ticks, take_ticks, retorno_risco),
             last_candle_at=candles[-1].time,
             data_age_minutes=idade,
             price_source=fonte_preco,
             is_stale=velho,
+            price_at=preco_em,
+            spread_ticks=spread_ticks,
+            risk_reward=retorno_risco,
+            setup_id=setup_id if status == "READY" else "",
         )
 
     # --- leitura do que ja existe ----------------------------------------
@@ -239,11 +263,11 @@ class FotoAnaliseService:
         registro = SymbolRepository(self._session).get_by_name(symbol)
         if registro is None or registro.point is None:
             return 0.0
-        return float(registro.point)
+        return float(registro.trade_tick_size or registro.point)
 
     def _latest_price(
-        self, symbol: str, candles: list[Candle], agora: datetime
-    ) -> tuple[float, str]:
+        self, symbol: str, candles: list[Candle], agora: datetime, tick_size: float
+    ) -> tuple[float, str, datetime | None, float | None]:
         """O preco mais atual que o sistema tem.
 
         A coleta so grava candles FECHADAS — por desenho, a ultima candle ja
@@ -258,25 +282,40 @@ class FotoAnaliseService:
         from app.database.repositories.tick_repository import TickRepository
 
         fechamento = candles[-1].close
+        horario_candle = candles[-1].time
         registro = SymbolRepository(self._session).get_by_name(symbol)
         if registro is None:
-            return fechamento, "CANDLE"
+            return fechamento, "CANDLE", horario_candle, None
 
         ticks = TickRepository(self._session).get_recent(registro.id, 1)
         if not ticks:
-            return fechamento, "CANDLE"
+            return fechamento, "CANDLE", horario_candle, None
 
         tick = ticks[-1]
         marca = _aware(tick.timestamp)
         ultima_candle = _aware(candles[-1].time)
-        if marca is None or ultima_candle is None or marca <= ultima_candle:
-            return fechamento, "CANDLE"
+        tempo_atual = _aware(agora)
+        # Um tick antigo nao e uma cotacao viva so por ser mais novo que a
+        # ultima candle. Tambem rejeitamos relogios no futuro: um timestamp
+        # adiantado faria uma base parada parecer saudavel indefinidamente.
+        if (
+            marca is None
+            or ultima_candle is None
+            or tempo_atual is None
+            or marca <= ultima_candle
+            or (tempo_atual - marca).total_seconds() < -5
+            or (tempo_atual - marca).total_seconds() > 120
+        ):
+            return fechamento, "CANDLE", horario_candle, None
 
         # Mid entre bid e ask: usar so o bid enviesaria toda a geometria da
         # zona pelo lado comprado do spread.
         bid, ask = float(tick.bid), float(tick.ask)
         preco = (bid + ask) / 2 if ask > 0 else bid
-        return (preco, "TICK") if preco > 0 else (fechamento, "CANDLE")
+        if preco <= 0:
+            return fechamento, "CANDLE", horario_candle, None
+        spread = (ask - bid) / tick_size if ask >= bid and tick_size > 0 else None
+        return preco, "TICK", marca, round(spread, 2) if spread is not None else None
 
     def _data_age(
         self, ultima: datetime | None, timeframe: Timeframe, agora: datetime
@@ -298,7 +337,13 @@ class FotoAnaliseService:
         return round(idade / 60, 1), idade > limite
 
     def _warnings(
-        self, report: AnalysisReport, velho: bool, idade: float | None
+        self,
+        report: AnalysisReport,
+        velho: bool,
+        idade: float | None,
+        spread_ticks: float | None,
+        take_ticks: int,
+        risk_reward: float | None,
     ) -> list[str]:
         avisos: list[str] = []
         if velho:
@@ -309,6 +354,15 @@ class FotoAnaliseService:
                 "passado, nao o mercado agora."
             )
         avisos.extend(report.rejection_reasons)
+        if spread_ticks is not None and spread_ticks >= take_ticks * 0.25:
+            avisos.append(
+                f"Spread observado de {spread_ticks:.1f} ticks consome uma parte relevante "
+                f"do alvo de {take_ticks} ticks."
+            )
+        if risk_reward is not None and risk_reward < 1.0:
+            avisos.append(
+                f"Retorno/risco bruto de {risk_reward:.2f} esta abaixo de 1.0."
+            )
         return avisos[:MAX_REASONS]
 
     def _recent_candles(self, primary) -> list[Candle]:
@@ -360,7 +414,7 @@ class FotoAnaliseService:
 
     # --- decisao ----------------------------------------------------------
 
-    def _resolve_bias(self, direction: str, report: AnalysisReport) -> SignalDirection:
+    def _resolve_bias(self, direction: str, report: AnalysisReport) -> SignalDirection | None:
         """Direcao forcada pelo usuario vence a automatica — de proposito.
 
         Quem pede "so compra" quer ver a melhor compra possivel, mesmo em
@@ -372,19 +426,50 @@ class FotoAnaliseService:
             return SignalDirection.LONG
         if pedido in {"VENDA", "SELL", "SHORT"}:
             return SignalDirection.SHORT
-        return SignalDirection.SHORT if report.trend == Trend.DOWN else SignalDirection.LONG
+        if report.trend == Trend.UP:
+            return SignalDirection.LONG
+        if report.trend == Trend.DOWN:
+            return SignalDirection.SHORT
+        # Nao escolher compra por omissao em mercado lateral. O painel ainda
+        # mostra o mapa, mas deixa claro que falta direcao para um setup.
+        return None
 
-    def _decide(self, zona: EntryZone | None, vies: SignalDirection) -> tuple[str, str]:
+    def _decide(
+        self,
+        zona: EntryZone | None,
+        vies: SignalDirection | None,
+        report: AnalysisReport,
+        candles: list[Candle],
+    ) -> tuple[str, str]:
+        if vies is None:
+            return "SEM_ENTRADA", "NO_TREND"
         if zona is None or zona.status == EntryStatus.NO_SETUP:
             return "SEM_ENTRADA", EntryStatus.NO_SETUP.value
-        if zona.status == EntryStatus.READY:
-            return ("COMPRA" if vies == SignalDirection.LONG else "VENDA"), zona.status.value
+        if zona.status == EntryStatus.IN_ZONE:
+            # Estar dentro da faixa e apenas localizacao. A entrada so fica
+            # pronta quando a analise principal aprova o contexto E a ultima
+            # candle fechada confirma o lado; assim "ENTRADA AGORA" nao e
+            # sinonimo de "preco tocou a zona".
+            if report.recommendation == "ENTER" and self._candle_confirms(candles, vies):
+                return ("COMPRA" if vies == SignalDirection.LONG else "VENDA"), "READY"
+            return "AGUARDAR", "CONFIRMATION_REQUIRED"
         return "AGUARDAR", zona.status.value
+
+    @staticmethod
+    def _candle_confirms(candles: list[Candle], direction: SignalDirection) -> bool:
+        if not candles:
+            return False
+        ultima = candles[-1]
+        return (
+            ultima.close > ultima.open
+            if direction == SignalDirection.LONG
+            else ultima.close < ultima.open
+        )
 
     def _stop_and_take(
         self,
         zona: EntryZone | None,
-        vies: SignalDirection,
+        vies: SignalDirection | None,
         take_ticks: int,
         tick_size: float,
         report: AnalysisReport,
@@ -396,7 +481,7 @@ class FotoAnaliseService:
         de valer. Derivar o stop do take produziria uma invalidacao que o
         mercado nao respeita.
         """
-        if zona is None:
+        if zona is None or vies is None:
             return None, None
 
         distancia = take_ticks * tick_size
@@ -420,7 +505,40 @@ class FotoAnaliseService:
             if mais_distante:
                 stop = estrutural
 
-        return round(stop, 8), round(take, 8)
+        return _round_to_tick(stop, tick_size), _round_to_tick(take, tick_size)
+
+    @staticmethod
+    def _risk_reward(
+        zona: EntryZone | None, stop: float | None, take: float | None
+    ) -> float | None:
+        if zona is None or stop is None or take is None:
+            return None
+        risco = abs(zona.sweet_spot - stop)
+        retorno = abs(take - zona.sweet_spot)
+        if risco <= 0 or retorno <= 0:
+            return None
+        return round(retorno / risco, 2)
+
+    @staticmethod
+    def _setup_id(
+        symbol: str,
+        timeframe: Timeframe,
+        direction: SignalDirection | None,
+        zona: EntryZone | None,
+        candle_at: datetime | None,
+    ) -> str:
+        if direction is None or zona is None or candle_at is None:
+            return ""
+        return ":".join(
+            (
+                symbol,
+                timeframe.value,
+                direction.value,
+                f"{zona.min:.8f}",
+                f"{zona.max:.8f}",
+                _aware(candle_at).isoformat(),
+            )
+        )
 
     def _decision_level(
         self, heatmap: list[HeatmapBand], current_price: float
@@ -466,12 +584,16 @@ class FotoAnaliseService:
         return sorted(niveis, key=lambda n: n.price, reverse=True)
 
     def _reasons(
-        self, report: AnalysisReport, entradas: HeatmapInputs, vies: SignalDirection
+        self, report: AnalysisReport, entradas: HeatmapInputs, vies: SignalDirection | None
     ) -> tuple[list[str], list[str]]:
         """Motivos vindos da analise, nao inventados aqui."""
         favor = list(report.confluences)[:MAX_REASONS]
 
         contra: list[str] = []
+        if vies is None:
+            return favor, ["Mercado lateral — direcao automatica suspensa", *report.rejection_reasons][
+                :MAX_REASONS
+            ]
         comprando = vies == SignalDirection.LONG
         obstaculos = entradas.resistances if comprando else entradas.supports
         proximos = [
@@ -505,7 +627,7 @@ class FotoAnaliseService:
             timeframe=timeframe,
             generated_at=report.generated_at,
             decision="SEM_ENTRADA",
-            bias="LONG",
+            bias="NEUTRAL",
             score=round(report.score.total_score, 1),
             current_price=0.0,
             take_ticks=take_ticks,
@@ -543,3 +665,10 @@ def _last_float(features: pd.DataFrame | None, coluna: str) -> float | None:
     if pd.isna(valor):
         return None
     return float(valor)
+
+
+def _round_to_tick(price: float, tick_size: float) -> float:
+    """Mantem stop e alvo em um preco que o ativo realmente aceita."""
+    if tick_size <= 0:
+        return round(price, 8)
+    return round(round(price / tick_size) * tick_size, 8)

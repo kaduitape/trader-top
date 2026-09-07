@@ -32,6 +32,12 @@ class SymbolSpecification:
     spread: int
     trade_mode: int
     visible: bool
+    # `point` e a menor casa decimal exibida. O passo em que o ativo pode
+    # realmente variar (`SYMBOL_TRADE_TICK_SIZE`) pode ser maior: por exemplo,
+    # um indice pode exibir 0.01 e negociar somente de 0.25 em 0.25.
+    # Mantemos um valor padrao para que especificacoes antigas continuem
+    # validas; o repositorio usa `point` como fallback ate a proxima sincronia.
+    trade_tick_size: float = 0.0
 
 
 def list_symbols(client: MT5ClientProtocol, group: str | None = None) -> list[str]:
@@ -73,6 +79,7 @@ def fetch_symbol_specification(
         spread=int(getattr(info, "spread", 0)),
         trade_mode=int(getattr(info, "trade_mode", 0)),
         visible=bool(getattr(info, "visible", False)),
+        trade_tick_size=float(getattr(info, "trade_tick_size", 0.0) or 0.0),
     )
 
 
