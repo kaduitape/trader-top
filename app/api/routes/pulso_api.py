@@ -35,10 +35,12 @@ from sqlalchemy.orm import Session
 from app.api.dependencies.api_token import get_api_token
 from app.database.models.api_token import ApiToken
 from app.database.repositories.audit_log_repository import AuditLogRepository
+from app.database.repositories.symbol_repository import SymbolRepository
 from app.database.session import get_db
 from app.foto_analise.heatmap import HeatmapDetail
 from app.foto_analise.service import FotoAnaliseService
 from app.foto_analise.toggle import load_analysis_toggle, set_symbol_enabled
+from app.market.catalog import resolve_broker_symbol
 from app.market.multi_timeframe import ANALYSIS_TIMEFRAMES, SymbolNotFoundError
 from app.mt5.market_data import Timeframe
 
@@ -239,6 +241,18 @@ def _desligado(symbol: str, timeframe: Timeframe) -> dict:
     }
 
 
+def _resolve_collected_symbol(db: Session, requested_symbol: str) -> str:
+    """Resolve o código do gráfico para o nome gravado pela corretora.
+
+    O EA usa o símbolo que aparece no gráfico (por exemplo, ``USTEC``), mas
+    uma corretora pode publicar e persistir o mesmo ativo como ``USTECm`` ou
+    ``USTEC.cash``. A análise precisa receber o nome do banco; o interruptor
+    permanece no código do gráfico para não criar estados duplicados.
+    """
+    active_names = [symbol.name for symbol in SymbolRepository(db).list_active()]
+    return resolve_broker_symbol(requested_symbol, active_names) or requested_symbol
+
+
 @router.get("")
 def pulso(
     symbol: str = Query(min_length=1, max_length=32),
@@ -263,7 +277,7 @@ def pulso(
 
     try:
         foto = FotoAnaliseService(db, detail=detalhe).build(
-            symbol=simbolo,
+            symbol=_resolve_collected_symbol(db, simbolo),
             timeframe=tf,
             take_ticks=take_ticks,
             direction=direction,

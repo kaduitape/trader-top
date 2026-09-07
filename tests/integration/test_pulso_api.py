@@ -25,6 +25,7 @@ from app.mt5.market_data import RawCandle, Timeframe
 from app.mt5.symbol_mapper import SymbolSpecification
 
 SIMBOLO = "PULSOAPI"
+SIMBOLO_COM_SUFIXO = "PULSOAPIm"
 INICIO = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
 
 
@@ -42,10 +43,11 @@ def _limpa(engine):
 
         sessao = get_session_factory()()
         try:
-            registro = SymbolRepository(sessao).get_by_name(SIMBOLO)
-            if registro is not None:
-                sessao.query(Candle).filter_by(symbol_id=registro.id).delete()
-                sessao.query(Symbol).filter_by(id=registro.id).delete()
+            for nome in (SIMBOLO, SIMBOLO_COM_SUFIXO):
+                registro = SymbolRepository(sessao).get_by_name(nome)
+                if registro is not None:
+                    sessao.query(Candle).filter_by(symbol_id=registro.id).delete()
+                    sessao.query(Symbol).filter_by(id=registro.id).delete()
             sessao.query(ApiToken).delete()
             # So as acoes destes testes: o audit log e de todo mundo.
             sessao.query(AuditLog).filter(
@@ -63,10 +65,10 @@ def _limpa(engine):
     apagar()
 
 
-def _semeia(db_session, *, barras: int = 320) -> None:
+def _semeia(db_session, *, barras: int = 320, symbol: str = SIMBOLO) -> None:
     simbolo = SymbolRepository(db_session).upsert_from_specification(
         SymbolSpecification(
-            name=SIMBOLO, description="teste", digits=2, point=0.25,
+            name=symbol, description="teste", digits=2, point=0.25,
             volume_min=1.0, volume_max=100.0, volume_step=1.0,
             trade_contract_size=1.0, spread=2, trade_mode=0, visible=True,
         )
@@ -141,6 +143,15 @@ def test_a_valid_key_works(client, db_session, chave) -> None:
     resposta = client.get(f"/api/pulso?symbol={SIMBOLO}", headers=_cabecalho(chave))
 
     assert resposta.status_code == 200
+
+
+def test_a_chart_symbol_resolves_a_broker_suffix(client, db_session, chave) -> None:
+    _semeia(db_session, symbol=SIMBOLO_COM_SUFIXO)
+
+    resposta = client.get(f"/api/pulso?symbol={SIMBOLO}", headers=_cabecalho(chave))
+
+    assert resposta.status_code == 200
+    assert resposta.json()["symbol"] == SIMBOLO_COM_SUFIXO
 
 
 def test_the_secret_is_never_stored_in_clear(db_session) -> None:
