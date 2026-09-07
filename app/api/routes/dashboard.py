@@ -16,11 +16,18 @@ from __future__ import annotations
 import base64
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from sqlalchemy.orm import Session
 
 from app.apexflow.config import load_apexflow_config, save_apexflow_config
@@ -2416,4 +2423,48 @@ def dashboard_api_token_revoke(
         + quote(f"Chave '{registro.name}' revogada. O indicador que a usava vai parar.")
         + "#api-tokens",
         status_code=303,
+    )
+
+
+INDICATOR_FILE = "AITraderPulse.mq5"
+
+
+def _indicator_path() -> Path:
+    """Caminho do `.mq5`, resolvido a partir deste arquivo.
+
+    Nao usa o diretorio de trabalho: no container o processo sobe em `/app`,
+    em desenvolvimento na raiz do repositorio, e um caminho relativo daria
+    404 em um dos dois. `parents[3]` e a raiz nos dois casos.
+    """
+    return Path(__file__).resolve().parents[3] / "scripts" / "mql5" / INDICATOR_FILE
+
+
+@router.get("/dashboard/mt5/indicator")
+def dashboard_mt5_indicator(
+    _user: User = Depends(get_current_user_for_web),
+) -> FileResponse:
+    """Baixa o indicador para instalar no MetaTrader.
+
+    Servido pelo painel, e nao pelo GitHub, porque quem instala esta com o
+    painel aberto na frente — e porque a versao entregue aqui e sempre a que
+    conversa com ESTE servidor. Baixar de outro lugar abre espaco para um
+    indicador de uma versao e uma API de outra.
+    """
+    caminho = _indicator_path()
+    if not caminho.is_file():
+        # Estado real: a imagem foi construida sem `scripts/mql5`. Dizer isso
+        # e melhor que um 500 — o proximo passo e reconstruir, nao depurar.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"{INDICATOR_FILE} nao esta nesta instalacao. A imagem foi "
+                "construida sem scripts/mql5 — rode `docker compose build app`."
+            ),
+        )
+
+    return FileResponse(
+        caminho,
+        media_type="text/plain; charset=utf-8",
+        filename=INDICATOR_FILE,
+        headers={"Content-Disposition": f'attachment; filename="{INDICATOR_FILE}"'},
     )

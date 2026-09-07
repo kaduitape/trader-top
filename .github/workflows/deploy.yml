@@ -30,6 +30,7 @@ jobs:
             app,
             alembic,
             docker/entrypoint.sh,
+            scripts/mql5,
             main.py,
             alembic.ini,
             Dockerfile,

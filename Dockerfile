@@ -31,6 +31,10 @@ COPY app ./app
 COPY main.py ./
 COPY alembic.ini ./
 COPY alembic ./alembic
+# O `.mq5` e servido pelo painel para download (rota
+# /dashboard/mt5/indicator). Fica UMA copia, aqui: duplica-lo em `static/`
+# criaria duas versoes do mesmo arquivo divergindo em silencio.
+COPY scripts/mql5 ./scripts/mql5
 COPY docker/entrypoint.sh /entrypoint.sh
 
 RUN pip install --no-cache-dir --no-deps . \

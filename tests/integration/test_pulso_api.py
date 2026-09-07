@@ -418,3 +418,80 @@ def test_the_tick_size_reaches_the_indicator(client, db_session, chave) -> None:
     dados = client.get(f"/api/pulso?symbol={SIMBOLO}", headers=_cabecalho(chave)).json()
 
     assert dados["tick_size"] == 0.25
+
+
+# --- download do indicador -------------------------------------------------
+
+
+@pytest.fixture
+def logado(client, db_session, request):
+    from app.core.security import hash_password
+    from app.database.repositories.user_repository import UserRepository
+
+    nome = f"ind_{abs(hash(request.node.name)) % 10**8}"
+    repo = UserRepository(db_session)
+    repo.create_user(
+        username=nome,
+        email=f"{nome}@example.com",
+        password_hash=hash_password("Sup3rSecret!"),
+        roles=[repo.get_or_create_role("ADMIN")],
+    )
+    db_session.commit()
+    client.post(
+        "/login",
+        data={"username": nome, "password": "Sup3rSecret!"},
+        follow_redirects=False,
+    )
+    return client
+
+
+def test_the_indicator_can_be_downloaded(logado) -> None:
+    """Quem instala esta com o painel aberto na frente — e a versao servida
+    aqui e a que conversa com ESTE servidor."""
+    resposta = logado.get("/dashboard/mt5/indicator")
+
+    assert resposta.status_code == 200
+    assert "AITraderPulse.mq5" in resposta.headers["content-disposition"]
+    assert "attachment" in resposta.headers["content-disposition"]
+
+
+def test_the_downloaded_file_is_the_real_source(logado) -> None:
+    """Servir uma copia desatualizada seria pior que nao servir: o operador
+    instalaria um indicador que nao bate com a API."""
+    import pathlib
+
+    resposta = logado.get("/dashboard/mt5/indicator")
+    original = pathlib.Path("scripts/mql5/AITraderPulse.mq5").read_text()
+
+    assert resposta.text == original
+    assert "CONTRACT_SUPPORTED" in resposta.text
+
+
+def test_the_download_requires_login(client) -> None:
+    resposta = client.get("/dashboard/mt5/indicator", follow_redirects=False)
+
+    assert resposta.status_code in (302, 303, 401)
+
+
+def test_a_missing_file_says_what_to_do(logado, monkeypatch) -> None:
+    """Imagem construida sem `scripts/mql5` e um estado real. Dizer isso e
+    melhor que um 500 — o proximo passo e reconstruir, nao depurar."""
+    import pathlib
+
+    from app.api.routes import dashboard
+
+    monkeypatch.setattr(
+        dashboard, "_indicator_path", lambda: pathlib.Path("/nao/existe.mq5")
+    )
+
+    resposta = logado.get("/dashboard/mt5/indicator")
+
+    assert resposta.status_code == 404
+    assert "docker compose build" in resposta.json()["detail"]
+
+
+def test_the_settings_page_offers_the_download(logado) -> None:
+    resposta = logado.get("/dashboard/settings")
+
+    assert resposta.status_code == 200
+    assert "/dashboard/mt5/indicator" in resposta.text

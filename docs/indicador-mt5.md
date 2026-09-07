@@ -33,13 +33,24 @@ Não existe "ver de novo": se o sistema conseguisse mostrar a chave depois,
 um vazamento do banco também conseguiria. Perdeu, revoga e gera outra — essa
 é a operação barata.
 
-**2. Copie o arquivo** para a pasta de Experts do terminal:
+**2. Baixe o indicador** no mesmo cartão: **Baixar AITraderPulse.mq5**.
+
+Servido pelo painel, e não pelo GitHub, porque quem instala está com o painel
+aberto na frente — e porque a versão entregue ali é sempre a que conversa com
+**aquele** servidor. Baixar de outro lugar abre espaço para um indicador de
+uma versão e uma API de outra.
+
+Copie para a pasta de Experts do terminal:
 
 ```text
 <Pasta de Dados do MetaTrader>\MQL5\Experts\AITraderPulse.mq5
 ```
 
 (No terminal: Arquivo → Abrir Pasta de Dados.) Compile no MetaEditor (F7).
+
+O arquivo entra na imagem Docker (`COPY scripts/mql5`) e é levado à VPS pelo
+deploy. Se o botão der 404, a imagem foi construída sem ele — a mensagem diz
+para rodar `docker compose build app`.
 
 **3. Libere a URL do painel** — Ferramentas → Opções → Expert Advisors →
 marque *"Permitir WebRequest para as URLs listadas"* e adicione a URL exata
